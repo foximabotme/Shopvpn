@@ -4998,26 +4998,8 @@ const SETTINGS_GROUPS = [
     { key: 'contact_text', label: 'متن ابتدای بخش ارتباط با پشتیبانی', type: 'textarea' },
     { key: 'after_buy_text', label: 'متن راهنمای پرداخت (بعد از انتخاب محصول)', type: 'textarea' },
   ]},
-  { tab: 'content', title: 'دکمه‌های منوی ربات', fields: [
-    { key: 'btn_buy', label: 'متن دکمه خرید کانفیگ', type: 'text' },
-    { key: 'btn_buy_style', label: 'رنگ دکمه خرید کانفیگ', type: 'color' },
-    { key: 'btn_test', label: 'متن دکمه کانفیگ تست', type: 'text' },
-    { key: 'btn_test_style', label: 'رنگ دکمه کانفیگ تست', type: 'color' },
-    { key: 'btn_my_orders', label: 'متن دکمه سفارش‌های من', type: 'text' },
-    { key: 'btn_my_orders_style', label: 'رنگ دکمه سفارش‌های من', type: 'color' },
-    { key: 'btn_referral', label: 'متن دکمه زیرمجموعه‌گیری', type: 'text' },
-    { key: 'btn_referral_style', label: 'رنگ دکمه زیرمجموعه‌گیری', type: 'color' },
-    { key: 'btn_wheel', label: 'متن دکمه گردونه شانس', type: 'text' },
-    { key: 'btn_wheel_style', label: 'رنگ دکمه گردونه شانس', type: 'color' },
-    { key: 'btn_contact', label: 'متن دکمه ارتباط با پشتیبانی', type: 'text' },
-    { key: 'btn_contact_style', label: 'رنگ دکمه ارتباط با پشتیبانی', type: 'color' },
-    { key: 'btn_reseller_panel', label: 'متن دکمه پنل نمایندگی (فقط برای نماینده‌ها)', type: 'text' },
-    { key: 'btn_reseller_panel_style', label: 'رنگ دکمه پنل نمایندگی', type: 'color' },
-    { key: 'btn_reseller_request', label: 'متن دکمه درخواست نمایندگی سطح ۲', type: 'text' },
-    { key: 'btn_reseller_request_style', label: 'رنگ دکمه درخواست نمایندگی سطح ۲', type: 'color' },
-    { key: 'btn_admin_panel', label: 'متن دکمه پنل مدیریت (فقط برای ادمین‌ها)', type: 'text' },
-    { key: 'btn_admin_panel_style', label: 'رنگ دکمه پنل مدیریت', type: 'color' },
-  ]},
+  // نکته: متن/رنگ/ترتیب/فعال‌سازی دکمه‌های منوی اصلی ربات دیگر اینجا نیست؛
+  // برای یکپارچه‌سازی، همه‌شان به تب «دکمه‌های ربات» منتقل شدند.
   { tab: 'content', title: '🎨 رنگ دکمه‌های مسیر خرید', fields: [
     { key: 'btn_cat_select_style', label: 'رنگ دکمه‌های انتخاب دسته‌بندی', type: 'color' },
     { key: 'btn_product_select_style', label: 'رنگ دکمه‌های انتخاب محصول', type: 'color' },
@@ -5216,127 +5198,9 @@ async function collectAndSaveSettings(root, btn) {
 }
 
 /* ------------------------------------------------------- menu order card - */
-let menuOrderItems = [];
-let menuOrderDragState = null;
-let menuOrderCustomLayout = false; // یعنی کاربر همین حالا چیدمان آزاد (ردیف‌ها) را ویرایش کرده
-
-function computeMenuRowNumbers() {
-  let row = 0;
-  return menuOrderItems.map((it, idx) => {
-    if (idx === 0 || it.break_before !== false) row++;
-    return row;
-  });
-}
-
-function menuOrderRowHtml(item, idx, rowNumbers) {
-  const joined = idx > 0 && item.break_before === false;
-  const toggle = item.togglable
-    ? `<span class="switch" data-order-enabled="${idx}" data-on="${item.enabled ? '1' : '0'}" title="فعال/غیرفعال" style="margin:0 4px"><i></i></span>`
-    : '';
-  return `
-    <div class="menu-order-row${joined ? ' menu-order-joined' : ''}" data-idx="${idx}">
-      <span class="menu-order-drag-handle" data-idx="${idx}">⠿</span>
-      <span class="chip" style="opacity:.7">ردیف ${rowNumbers[idx]}</span>
-      <span class="menu-order-label">${esc(item.label)}${item.admin_only ? ' <span class="card-sub">(فقط ادمین)</span>' : ''}</span>
-      ${item.togglable && item.enabled === false ? '<span class="chip" style="color:var(--rose)">غیرفعال</span>' : ''}
-      ${toggle}
-      <div class="menu-order-arrows">
-        ${idx > 0 ? `<button type="button" class="btn btn-sm ${joined ? 'btn-primary' : 'btn-ghost'}" data-order-break="${idx}" title="کنار دکمه‌ی قبلی یا در ردیف جدید">${joined ? '↔ کنار قبلی' : '⤵ ردیف جدید'}</button>` : ''}
-        <button type="button" class="btn btn-sm btn-ghost" data-order-up="${idx}" ${idx === 0 ? 'disabled' : ''}>▲</button>
-        <button type="button" class="btn btn-sm btn-ghost" data-order-down="${idx}" ${idx === menuOrderItems.length - 1 ? 'disabled' : ''}>▼</button>
-      </div>
-    </div>`;
-}
-
-function renderMenuOrderList() {
-  const list = $('#menu-order-list', content());
-  if (!list) return;
-  const rowNumbers = computeMenuRowNumbers();
-  list.innerHTML = menuOrderItems.map((item, idx) => menuOrderRowHtml(item, idx, rowNumbers)).join('');
-  $$('[data-order-up]', list).forEach(b => b.addEventListener('click', () => moveMenuOrderItem(Number(b.dataset.orderUp), -1)));
-  $$('[data-order-down]', list).forEach(b => b.addEventListener('click', () => moveMenuOrderItem(Number(b.dataset.orderDown), 1)));
-  $$('[data-order-break]', list).forEach(b => b.addEventListener('click', () => toggleMenuOrderBreak(Number(b.dataset.orderBreak))));
-  $$('.menu-order-drag-handle', list).forEach(h => h.addEventListener('pointerdown', onMenuOrderDragStart));
-  $$('[data-order-enabled]', list).forEach(sw => sw.addEventListener('click', () => {
-    const idx = Number(sw.dataset.orderEnabled);
-    menuOrderItems[idx].enabled = !menuOrderItems[idx].enabled;
-    renderMenuOrderList();
-  }));
-}
-
-function toggleMenuOrderBreak(idx) {
-  const item = menuOrderItems[idx];
-  if (!item || idx === 0) return;
-  // اگر break_before تا حالا مشخص نشده بود (چیدمان قدیمی ستون‌ثابت)، اولین کلیک
-  // یعنی «بچسبان به قبلی»؛ بعد از این لحظه چیدمان آزاد رسماً شروع شده.
-  item.break_before = item.break_before === false ? true : false;
-  menuOrderCustomLayout = true;
-  renderMenuOrderList();
-}
-
-function moveMenuOrderItem(idx, dir) {
-  const newIdx = idx + dir;
-  if (newIdx < 0 || newIdx >= menuOrderItems.length) return;
-  const tmp = menuOrderItems[idx];
-  menuOrderItems[idx] = menuOrderItems[newIdx];
-  menuOrderItems[newIdx] = tmp;
-  renderMenuOrderList();
-}
-
-function onMenuOrderDragStart(e) {
-  e.preventDefault();
-  const list = $('#menu-order-list', content());
-  const rows = $$('.menu-order-row', list);
-  const startIdx = Number(e.currentTarget.dataset.idx);
-  const row = rows[startIdx];
-  row.classList.add('dragging');
-  menuOrderDragState = { startIdx, currentIdx: startIdx };
-
-  const onContextMenu = (ctxEvt) => ctxEvt.preventDefault();
-  document.body.classList.add('menu-order-dragging-lock');
-  document.addEventListener('contextmenu', onContextMenu);
-
-  const onMove = (moveEvt) => {
-    if (!menuOrderDragState) return;
-    moveEvt.preventDefault();
-    const target = document.elementFromPoint(moveEvt.clientX, moveEvt.clientY);
-    const overRow = target && target.closest('.menu-order-row');
-    rows.forEach(r => r.classList.remove('drag-over'));
-    if (overRow && overRow !== row) {
-      overRow.classList.add('drag-over');
-      menuOrderDragState.currentIdx = Number(overRow.dataset.idx);
-    }
-  };
-  const onUp = () => {
-    document.removeEventListener('pointermove', onMove);
-    document.removeEventListener('pointerup', onUp);
-    document.removeEventListener('contextmenu', onContextMenu);
-    document.body.classList.remove('menu-order-dragging-lock');
-    if (menuOrderDragState && menuOrderDragState.currentIdx !== menuOrderDragState.startIdx) {
-      const { startIdx: s, currentIdx: c } = menuOrderDragState;
-      const [moved] = menuOrderItems.splice(s, 1);
-      menuOrderItems.splice(c, 0, moved);
-    }
-    menuOrderDragState = null;
-    renderMenuOrderList();
-  };
-  document.addEventListener('pointermove', onMove, { passive: false });
-  document.addEventListener('pointerup', onUp);
-}
-
-function menuOrderCardHtml(items) {
-  menuOrderItems = items;
-  menuOrderCustomLayout = false;
-  return `
-    <div class="card" style="margin-bottom:18px">
-      <div class="card-head">
-        <h3>چیدمان دکمه‌های منوی ربات</h3>
-        <button class="btn btn-primary btn-sm" id="menu-order-save">ذخیره چیدمان</button>
-      </div>
-      <span class="card-sub">با دستگیره ⠿ (یا فلش‌ها) ترتیب را جابه‌جا کن؛ با دکمه‌ی «کنار قبلی / ردیف جدید» مشخص کن کدام دکمه‌ها کنار هم و کدام‌ها در ردیف جدا نمایش داده شوند - مثلاً یک دکمه تمام‌عرض بالا و دو دکمه کنار هم پایینش.</span>
-      <div id="menu-order-list" style="margin-top:12px"></div>
-    </div>`;
-}
+// نکته: ویرایشگر ترتیب/فعال‌سازی/متن/رنگ دکمه‌های منوی اصلی از اینجا به تب
+// «دکمه‌های ربات» منتقل شد (پایین‌تر: buildMainMenuGroup). این بخش فقط نوع
+// نمایش منو (Reply/Inline) و تعداد ستون را نگه می‌دارد که مکمل آن است.
 
 function mainMenuDisplayCardHtml(mm) {
   return `
@@ -5388,35 +5252,15 @@ async function saveMainMenuDisplay() {
   }
 }
 
-async function saveMenuOrder() {
-  const btn = $('#menu-order-save', content());
-  btn.disabled = true;
-  const prevTxt = btn.textContent; btn.textContent = 'در حال ذخیره...';
-  try {
-    const order = menuOrderItems.map(i => i.key);
-    const buttons = menuOrderItems.filter(i => i.togglable).map(i => ({ key: i.key, enabled: !!i.enabled }));
-    if (menuOrderCustomLayout) {
-      // یعنی کاربر همین الان حداقل یک بار چیدمان ردیف‌ها را دستی تغییر داده؛
-      // بقیه‌ی آیتم‌هایی که هنوز break_before نامشخص (null) دارند به‌صورت
-      // پیش‌فرض «ردیف جدا» در نظر گرفته می‌شوند تا رفتار قابل‌پیش‌بینی بماند.
-      const breaks = menuOrderItems.filter((it, idx) => idx > 0 && it.break_before !== false).map(i => i.key);
-      await apiPost('/settings/menu-layout', { order, breaks, buttons });
-    } else {
-      await apiPost('/settings/menu-order', { order, buttons });
-    }
-    toast('چیدمان منو ذخیره شد.');
-  } catch (e) {
-    handleErr(e);
-  } finally {
-    btn.disabled = false; btn.textContent = prevTxt;
-  }
-}
-
 /* ================================================== bot buttons tab === */
-// تب مستقل «دکمه‌های ربات»: کاستوم‌سازی متن/رنگ/ترتیب همه‌ی دکمه‌های بات
-// (به‌جز منوی اصلی که ویرایشگر مخصوص خودش را بالاتر دارد). ساختار داده از
-// GET /api/buttons می‌آید و هر گروه با یک کارت مستقل رندر می‌شود.
-let BTN_REGISTRY = null; // { groups: [...], style_options: [...] }
+// تب مستقل «دکمه‌های ربات»: کاستوم‌سازی متن/رنگ/ترتیب همه‌ی دکمه‌های بات،
+// از جمله منوی اصلی (پایین/شیشه‌ای) که قبلاً در تب «تنظیمات و برندینگ» بود
+// و برای یکپارچه‌سازی چیدمان دکمه‌ها به یک محل، به اینجا منتقل شد.
+// ساختار داده‌ی گروه‌های عمومی از GET /api/buttons می‌آید؛ گروه منوی اصلی
+// جداگانه از GET /api/settings/menu-order خوانده و به همان لیست گروه‌ها
+// اضافه می‌شود - هر گروه با یک کارت مستقل و با همان استایل قبلی رندر می‌شود.
+let BTN_REGISTRY = null; // { groups: [...], style_options: [...] }  (فقط گروه‌های عمومی)
+let BTN_GROUPS = [];     // منوی اصلی + BTN_REGISTRY.groups - همان‌چیزی که رندر می‌شود
 let btnDragState = null;
 
 function btnStyleSelectHtml(item, groupKey) {
@@ -5432,21 +5276,45 @@ function btnTextInputHtml(item, groupKey) {
   return `<input class="input btn-text-input" style="flex:1;min-width:160px" type="text" value="${esc(item.text || '')}" data-group="${esc(groupKey)}" data-key="${esc(item.key)}" placeholder="متن دکمه">`;
 }
 
-function btnRowHtml(group, item, idx) {
+// شماره‌ی ردیف هر آیتم برای گروه‌هایی که چیدمان ردیف (کنار هم/ردیف جدا) دارند
+// - عیناً همان منطق قبلیِ «چیدمان دکمه‌های منوی ربات».
+function computeGroupRowNumbers(group) {
+  let row = 0;
+  return group.items.map((it, idx) => {
+    if (idx === 0 || it.break_before !== false) row++;
+    return row;
+  });
+}
+
+function btnRowHtml(group, item, idx, rowNumbers) {
   const drag = group.reorderable
     ? `<span class="menu-order-drag-handle" data-group="${esc(group.key)}" data-idx="${idx}">⠿</span>`
     : `<span style="width:20px;display:inline-block"></span>`;
+  const supportsBreak = !!group.supports_row_break;
+  const joined = supportsBreak && idx > 0 && item.break_before === false;
+  const rowChip = supportsBreak ? `<span class="chip" style="opacity:.7">ردیف ${rowNumbers[idx]}</span>` : '';
+  const toggle = item.togglable
+    ? `<span class="switch" data-toggle-group="${esc(group.key)}" data-toggle-idx="${idx}" data-on="${item.enabled ? '1' : '0'}" title="فعال/غیرفعال" style="margin:0 4px"><i></i></span>`
+    : '';
+  const breakBtn = (supportsBreak && idx > 0)
+    ? `<button type="button" class="btn btn-sm ${joined ? 'btn-primary' : 'btn-ghost'}" data-break-group="${esc(group.key)}" data-break-idx="${idx}" title="کنار دکمه‌ی قبلی یا در ردیف جدید">${joined ? '↔ کنار قبلی' : '⤵ ردیف جدید'}</button>`
+    : '';
   return `
-    <div class="menu-order-row" data-group="${esc(group.key)}" data-idx="${idx}" data-key="${esc(item.key)}">
+    <div class="menu-order-row${joined ? ' menu-order-joined' : ''}" data-group="${esc(group.key)}" data-idx="${idx}" data-key="${esc(item.key)}">
       ${drag}
-      <span class="menu-order-label" style="flex:none;min-width:120px">${esc(item.label)}</span>
+      ${rowChip}
+      <span class="menu-order-label" style="flex:none;min-width:120px">${esc(item.label)}${item.admin_only ? ' <span class="card-sub">(فقط ادمین)</span>' : ''}</span>
+      ${item.togglable && item.enabled === false ? '<span class="chip" style="color:var(--rose)">غیرفعال</span>' : ''}
+      ${toggle}
       ${btnTextInputHtml(item, group.key)}
       ${btnStyleSelectHtml(item, group.key)}
+      ${breakBtn}
     </div>`;
 }
 
 function btnGroupCardHtml(group) {
-  const rows = group.items.map((item, idx) => btnRowHtml(group, item, idx)).join('');
+  const rowNumbers = group.supports_row_break ? computeGroupRowNumbers(group) : [];
+  const rows = group.items.map((item, idx) => btnRowHtml(group, item, idx, rowNumbers)).join('');
   return `
     <div class="card" style="margin-bottom:18px" data-group-card="${esc(group.key)}">
       <div class="card-head">
@@ -5489,7 +5357,7 @@ function onBtnDragStart(e) {
     document.removeEventListener('contextmenu', onContextMenu);
     document.body.classList.remove('menu-order-dragging-lock');
     if (btnDragState && btnDragState.currentIdx !== btnDragState.startIdx) {
-      const group = BTN_REGISTRY.groups.find(g => g.key === groupKey);
+      const group = BTN_GROUPS.find(g => g.key === groupKey);
       const { startIdx: s, currentIdx: c } = btnDragState;
       const [moved] = group.items.splice(s, 1);
       group.items.splice(c, 0, moved);
@@ -5502,10 +5370,11 @@ function onBtnDragStart(e) {
 }
 
 function renderButtonGroupList(groupKey) {
-  const group = BTN_REGISTRY.groups.find(g => g.key === groupKey);
+  const group = BTN_GROUPS.find(g => g.key === groupKey);
   const list = document.querySelector(`[data-group-list="${groupKey}"]`);
   if (!group || !list) return;
-  list.innerHTML = group.items.map((item, idx) => btnRowHtml(group, item, idx)).join('');
+  const rowNumbers = group.supports_row_break ? computeGroupRowNumbers(group) : [];
+  list.innerHTML = group.items.map((item, idx) => btnRowHtml(group, item, idx, rowNumbers)).join('');
   wireButtonGroupList(groupKey);
 }
 
@@ -5514,35 +5383,74 @@ function wireButtonGroupList(groupKey) {
   if (!list) return;
   $$('.menu-order-drag-handle', list).forEach(h => h.addEventListener('pointerdown', onBtnDragStart));
   $$('.btn-text-input', list).forEach(inp => inp.addEventListener('input', () => {
-    const group = BTN_REGISTRY.groups.find(g => g.key === inp.dataset.group);
+    const group = BTN_GROUPS.find(g => g.key === inp.dataset.group);
     const item = group.items.find(i => i.key === inp.dataset.key);
     if (item) item.text = inp.value;
   }));
   $$('.btn-style-select', list).forEach(sel => sel.addEventListener('change', () => {
-    const group = BTN_REGISTRY.groups.find(g => g.key === sel.dataset.group);
+    const group = BTN_GROUPS.find(g => g.key === sel.dataset.group);
     const item = group.items.find(i => i.key === sel.dataset.key);
     if (item) item.style = sel.value;
+  }));
+  $$('[data-toggle-group]', list).forEach(sw => sw.addEventListener('click', () => {
+    const group = BTN_GROUPS.find(g => g.key === sw.dataset.toggleGroup);
+    const item = group && group.items[Number(sw.dataset.toggleIdx)];
+    if (!item) return;
+    item.enabled = !item.enabled;
+    renderButtonGroupList(group.key);
+  }));
+  $$('[data-break-group]', list).forEach(b => b.addEventListener('click', () => {
+    const group = BTN_GROUPS.find(g => g.key === b.dataset.breakGroup);
+    const idx = Number(b.dataset.breakIdx);
+    const item = group && group.items[idx];
+    if (!item || idx === 0) return;
+    // اگر break_before تا حالا مشخص نشده بود (چیدمان قدیمی ستون‌ثابت)، اولین
+    // کلیک یعنی «بچسبان به قبلی»؛ بعد از این لحظه چیدمان آزاد رسماً شروع شده.
+    item.break_before = item.break_before === false ? true : false;
+    group._customLayoutTouched = true;
+    renderButtonGroupList(group.key);
   }));
 }
 
 async function saveButtonGroup(groupKey) {
-  const group = BTN_REGISTRY.groups.find(g => g.key === groupKey);
+  const group = BTN_GROUPS.find(g => g.key === groupKey);
   const btn = document.querySelector(`[data-save-group="${groupKey}"]`);
   if (!group || !btn) return;
   btn.disabled = true;
   const prevTxt = btn.textContent; btn.textContent = 'در حال ذخیره...';
   try {
-    if (group.reorderable) {
-      await apiPost('/buttons/order', { group: group.key, order: group.items.map(i => i.key) });
+    if (groupKey === 'main_menu') {
+      // گروه منوی اصلی از APIهای مخصوص خودش استفاده می‌کند (همان که قبلاً در
+      // تب «تنظیمات و برندینگ» بود) تا هیچ‌کدام از ویژگی‌های قبلی‌اش
+      // (فعال/غیرفعال، چیدمان ردیف‌ها) تغییر نکند.
+      const order = group.items.map(i => i.key);
+      const buttons = group.items
+        .filter(i => i.togglable || i.has_text || i.has_style)
+        .map(i => ({
+          key: i.key,
+          enabled: i.togglable ? !!i.enabled : undefined,
+          text: i.has_text ? i.text : undefined,
+          style: i.has_style ? i.style : undefined,
+        }));
+      if (group._customLayoutTouched) {
+        const breaks = group.items.filter((it, idx) => idx > 0 && it.break_before !== false).map(i => i.key);
+        await apiPost('/settings/menu-layout', { order, breaks, buttons });
+      } else {
+        await apiPost('/settings/menu-order', { order, buttons });
+      }
+    } else {
+      if (group.reorderable) {
+        await apiPost('/buttons/order', { group: group.key, order: group.items.map(i => i.key) });
+      }
+      const itemCalls = group.items
+        .filter(i => i.has_text || i.has_style)
+        .map(i => apiPost('/buttons/item', {
+          group: group.key, key: i.key,
+          text: i.has_text ? i.text : undefined,
+          style: i.has_style ? i.style : undefined,
+        }));
+      await Promise.all(itemCalls);
     }
-    const itemCalls = group.items
-      .filter(i => i.has_text || i.has_style)
-      .map(i => apiPost('/buttons/item', {
-        group: group.key, key: i.key,
-        text: i.has_text ? i.text : undefined,
-        style: i.has_style ? i.style : undefined,
-      }));
-    await Promise.all(itemCalls);
     toast('ذخیره شد.');
   } catch (e) {
     handleErr(e);
@@ -5551,15 +5459,29 @@ async function saveButtonGroup(groupKey) {
   }
 }
 
+function buildMainMenuGroup(items) {
+  return {
+    key: 'main_menu',
+    label: 'منوی اصلی ربات (پایین / شیشه‌ای)',
+    reorderable: true,
+    supports_row_break: true,
+    note: 'ترتیب، فعال/غیرفعال بودن، متن و رنگ دکمه‌های منوی اصلی ربات از همین‌جا قابل تغییر است. با دستگیره ⠿ ترتیب را جابه‌جا کن و با دکمه‌ی «کنار قبلی / ردیف جدید» مشخص کن کدام دکمه‌ها کنار هم و کدام‌ها در ردیف جدا نمایش داده شوند. برای نوع نمایش منو (پایین/شیشه‌ای) و تعداد دکمه در هر ردیف، به تب «تنظیمات و برندینگ» برو.',
+    items,
+    _customLayoutTouched: false,
+  };
+}
+
 async function renderButtons() {
-  BTN_REGISTRY = await apiGet('/buttons');
+  const [registry, menuOrder] = await Promise.all([apiGet('/buttons'), apiGet('/settings/menu-order')]);
+  BTN_REGISTRY = registry;
+  BTN_GROUPS = [buildMainMenuGroup(menuOrder), ...BTN_REGISTRY.groups];
   const html = `
     <div class="card" style="margin-bottom:18px">
-      <span class="card-sub">متن، رنگ و جای هر دکمه‌ی بات (پنل مدیریت، مسیر خرید، حساب کاربری من، روش‌های پرداخت و درگاه‌های سفارشی) از همین‌جا قابل تغییر است. رنگ فقط بین حالت‌های پیش‌فرض/آبی/سبز/قرمز قابل انتخابه، چون محدودیت خود تلگرامه. برای چیدمان منوی اصلی بات به تب «تنظیمات و برندینگ» برو.</span>
+      <span class="card-sub">متن، رنگ، ترتیب و فعال/غیرفعال بودن هر دکمه‌ی بات (منوی اصلی، پنل مدیریت، مسیر خرید، حساب کاربری من، روش‌های پرداخت و درگاه‌های سفارشی) از همین‌جا قابل تغییر است. رنگ فقط بین حالت‌های پیش‌فرض/آبی/سبز/قرمز قابل انتخابه، چون محدودیت خود تلگرامه.</span>
     </div>
-    ${BTN_REGISTRY.groups.map(g => btnGroupCardHtml(g)).join('')}`;
+    ${BTN_GROUPS.map(g => btnGroupCardHtml(g)).join('')}`;
   setContent(html);
-  BTN_REGISTRY.groups.forEach(g => wireButtonGroupList(g.key));
+  BTN_GROUPS.forEach(g => wireButtonGroupList(g.key));
   $$('[data-save-group]', content()).forEach(b => b.addEventListener('click', () => saveButtonGroup(b.dataset.saveGroup)));
 }
 
@@ -6019,10 +5941,9 @@ const C2C_STATUS_LABEL = {
 
 
 async function renderSettings() {
-  const [settings, rate, menuOrder, mainMenuDisplay, gateways, methods, c2cCards, c2cWebhook, c2cInvoices] = await Promise.all([
+  const [settings, rate, mainMenuDisplay, gateways, methods, c2cCards, c2cWebhook, c2cInvoices] = await Promise.all([
     apiGet('/settings'),
     apiGet('/exchange-rate').catch(e => ({ ok: false, rate: null, source: null, updated_at: null, error: e.message })),
-    apiGet('/settings/menu-order').catch(() => []),
     apiGet('/settings/main-menu-display').catch(() => ({ reply_enabled: true, inline_enabled: false, columns: 1 })),
     apiGet('/gateways').catch(() => []),
     apiGet('/payment-methods').catch(() => []),
@@ -6031,14 +5952,13 @@ async function renderSettings() {
     apiGet('/card-to-card/invoices?status=pending').catch(() => []),
   ]);
   const pay = { gateways, methods, c2cCards, c2cWebhook, c2cInvoices };
-  if (loadTheme().theme === 'brutalist') return renderSettingsBrutalist(settings, rate, menuOrder, mainMenuDisplay, pay);
-  if (loadTheme().theme === 'bento') return renderSettingsBento(settings, rate, menuOrder, mainMenuDisplay, pay);
+  if (loadTheme().theme === 'brutalist') return renderSettingsBrutalist(settings, rate, mainMenuDisplay, pay);
+  if (loadTheme().theme === 'bento') return renderSettingsBento(settings, rate, mainMenuDisplay, pay);
   setContent(`
     ${settingsTabsHtml()}
 
     <div data-settings-tab="content" style="${settingsActiveTab === 'content' ? '' : 'display:none'}">
       ${mainMenuDisplayCardHtml(mainMenuDisplay)}
-      ${menuOrderCardHtml(menuOrder)}
     </div>
 
     <div data-settings-tab="payment" style="${settingsActiveTab === 'payment' ? '' : 'display:none'}">
@@ -6055,8 +5975,6 @@ async function renderSettings() {
   $$('#settings-tabs-nav .tab-btn', content()).forEach(btn => btn.addEventListener('click', () => switchSettingsTab(btn.dataset.tab, content())));
   bindSettingsGroupEvents(content());
   bindPaymentExtrasEvents(content(), pay);
-  renderMenuOrderList();
-  $('#menu-order-save').addEventListener('click', saveMenuOrder);
   $('#mm-display-save').addEventListener('click', saveMainMenuDisplay);
   $('#settings-save').addEventListener('click', () => collectAndSaveSettings(content(), $('#settings-save')));
   $('#rate-refresh').addEventListener('click', async () => {
@@ -6076,7 +5994,7 @@ async function renderSettings() {
 /* ----------------------------------------------------- settings: bento -- */
 // تب افقی به سگمنت کپسولی اپلی تبدیل می‌شه؛ بدنه‌ی فرم همون منطق قبلیه،
 // فقط با آکاردئون/سوییچ/سواچ گردتر (از طریق CSS اسکوپ‌شده به تم bento).
-function renderSettingsBento(settings, rate, menuOrder, mainMenuDisplay, pay) {
+function renderSettingsBento(settings, rate, mainMenuDisplay, pay) {
   setContent(`
     <div class="bn-hero"><div><h2>تنظیمات</h2><p>پیکربندی محتوا، پرداخت، کمپین و سرویس‌های ربات</p></div></div>
     <div class="bn-seg" id="settings-tabs-nav" style="margin-bottom:16px">
@@ -6084,7 +6002,6 @@ function renderSettingsBento(settings, rate, menuOrder, mainMenuDisplay, pay) {
     </div>
     <div data-settings-tab="content" style="${settingsActiveTab === 'content' ? '' : 'display:none'}">
       ${mainMenuDisplayCardHtml(mainMenuDisplay)}
-      ${menuOrderCardHtml(menuOrder)}
     </div>
     <div data-settings-tab="payment" style="${settingsActiveTab === 'payment' ? '' : 'display:none'}">
       ${rateCardHtml(rate)}
@@ -6098,8 +6015,6 @@ function renderSettingsBento(settings, rate, menuOrder, mainMenuDisplay, pay) {
   $$('#settings-tabs-nav .bn-seg-btn', content()).forEach(btn => btn.addEventListener('click', () => switchSettingsTab(btn.dataset.tab, content())));
   bindSettingsGroupEvents(content());
   bindPaymentExtrasEvents(content(), pay);
-  renderMenuOrderList();
-  $('#menu-order-save').addEventListener('click', saveMenuOrder);
   $('#mm-display-save').addEventListener('click', saveMainMenuDisplay);
   $('#settings-save').addEventListener('click', () => collectAndSaveSettings(content(), $('#settings-save')));
   $('#rate-refresh').addEventListener('click', async () => {
@@ -6130,7 +6045,7 @@ function renderSettingsBento(settings, rate, menuOrder, mainMenuDisplay, pay) {
 /* ------------------------------------------------- settings: brutalist -- */
 // ناوبری از تب افقی به سایدبار عمودی تبدیل می‌شه (مثل داشبورد ادمین‌های
 // واقعی) — بدنه‌ی فرم‌ها با همون منطق قبلی، فقط قاب/سوییچ/سواچ برutalist.
-function renderSettingsBrutalist(settings, rate, menuOrder, mainMenuDisplay, pay) {
+function renderSettingsBrutalist(settings, rate, mainMenuDisplay, pay) {
   setContent(`
     <div class="bru-hero"><h2>تنظیمات</h2><p>پیکربندی محتوا، پرداخت، کمپین و سرویس‌های ربات</p></div>
     <div class="bru-settings-layout">
@@ -6140,7 +6055,6 @@ function renderSettingsBrutalist(settings, rate, menuOrder, mainMenuDisplay, pay
       <div class="bru-settings-content">
         <div data-settings-tab="content" style="${settingsActiveTab === 'content' ? '' : 'display:none'}">
           ${mainMenuDisplayCardHtml(mainMenuDisplay)}
-          ${menuOrderCardHtml(menuOrder)}
         </div>
         <div data-settings-tab="payment" style="${settingsActiveTab === 'payment' ? '' : 'display:none'}">
           ${rateCardHtml(rate)}
@@ -6156,8 +6070,6 @@ function renderSettingsBrutalist(settings, rate, menuOrder, mainMenuDisplay, pay
   $$('#settings-tabs-nav .bru-seg-btn', content()).forEach(btn => btn.addEventListener('click', () => switchSettingsTab(btn.dataset.tab, content())));
   bindSettingsGroupEvents(content());
   bindPaymentExtrasEvents(content(), pay);
-  renderMenuOrderList();
-  $('#menu-order-save').addEventListener('click', saveMenuOrder);
   $('#mm-display-save').addEventListener('click', saveMainMenuDisplay);
   $('#settings-save').addEventListener('click', () => collectAndSaveSettings(content(), $('#settings-save')));
   $('#rate-refresh').addEventListener('click', async () => {
