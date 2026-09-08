@@ -61,6 +61,7 @@ import exchange_rate
 import geo_scan
 import world_map
 import payment_engine
+import custom_gateway_payment
 
 logger = logging.getLogger("admin_panel.server")
 
@@ -2650,20 +2651,27 @@ async def api_test_gateway(gateway_id: int, body: CustomGatewayTestRequest, admi
     row, config = _gw_load(gateway_id=gateway_id)
     if not API_BASE_URL:
         return {"success": False, "error": "آدرس مینی‌اپ (MINIAPP_URL) روی سرور تنظیم نشده است."}
+    try:
+        computed = await custom_gateway_payment.compute_send_amount(db, config, body.amount_toman)
+    except custom_gateway_payment.CustomGatewayPaymentError as e:
+        return {"success": False, "error": str(e)}
     gw = payment_engine.GenericGateway(config)
     tenant = _current_tenant.get()
     our_ref = f"test-{gateway_id}-{int(time.time())}"
     try:
         result = await gw.create_invoice(
-            amount=body.amount_toman, amount_toman=body.amount_toman,
-            order_id=our_ref, currency="IRT", description="تست اتصال درگاه",
+            amount=computed["amount"], amount_toman=body.amount_toman,
+            order_id=our_ref, currency=computed["currency"], description="تست اتصال درگاه",
             tenant_id=tenant.slug or "main",
             callback_url=f"{API_BASE_URL}/api/pay/custom/{row['gateway_key']}/return?b={tenant.slug}&txn={our_ref}",
             webhook_url=f"{API_BASE_URL}/api/webhooks/custom/{row['gateway_key']}?b={tenant.slug}",
         )
     except payment_engine.PaymentEngineError as e:
         return {"success": False, "error": str(e)}
-    return {"success": True, "invoice_url": result.get("invoice_url"), "txn_id": result.get("txn_id")}
+    return {
+        "success": True, "invoice_url": result.get("invoice_url"), "txn_id": result.get("txn_id"),
+        "sent_amount": computed["amount"], "sent_currency": computed["currency"],
+    }
 
 
 # ------------------------------------- کارت‌به‌کارت با تایید خودکار (پیامک بانک) -----
