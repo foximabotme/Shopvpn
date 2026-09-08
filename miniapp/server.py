@@ -62,6 +62,8 @@ import exchange_rate
 import crypto_payment
 import abangateway_client
 import abangateway_payment
+import blupal_client
+import blupal_payment
 import noapay_client
 import noapay_payment
 import payment_engine
@@ -722,6 +724,7 @@ def api_custom_config_info(auth=Depends(get_verified_user)):
         and bool(_resolve_plisio_key(db)) and bool(API_BASE_URL),
         "abangateway_enabled": db.get_setting("abangateway_payment_enabled", "0") == "1"
         and bool(_resolve_abangateway_key(db)) and bool(API_BASE_URL),
+        "blupal_enabled": blupal_payment.blupal_payment_available(db),
         "noapay_enabled": noapay_payment.noapay_payment_available(db),
         "card_to_card_enabled": db.get_setting("card_to_card_enabled", "1") == "1",
         "card_number": db.get_setting("card_number"), "card_holder": db.get_setting("card_holder"),
@@ -1306,6 +1309,7 @@ def _payment_flags(db: Database, amount: int, product_id: int = None) -> dict:
         and bool(_resolve_plisio_key(db)) and bool(API_BASE_URL) and _ok("crypto"),
         "abangateway_enabled": db.get_setting("abangateway_payment_enabled", "0") == "1"
         and bool(_resolve_abangateway_key(db)) and bool(API_BASE_URL) and _ok("abangateway"),
+        "blupal_enabled": blupal_payment.blupal_payment_available(db) and _ok("blupal"),
         "noapay_enabled": noapay_payment.noapay_payment_available(db) and _ok("noapay"),
         "card_to_card_auto_enabled": db.get_setting("card_to_card_auto_enabled", "0") == "1"
         and bool(db.list_card_to_card_cards(only_active=True)) and _ok("card_auto"),
@@ -1766,6 +1770,263 @@ async def api_abangateway_webhook(request: Request, tenant: Tenant = Depends(get
                         json={
                             "chat_id": admin_id,
                             "text": f"⚠️ سفارش #{order_id} با آبان گیت وی پرداخت شد ولی موجودی هم‌زمان تمام شده. لطفاً دستی رسیدگی کنید.",
+                        },
+                    )
+                except Exception:
+                    pass
+    return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# پرداخت کارت‌به‌کارت خودکار (بلوپال)
+# ---------------------------------------------------------------------------
+
+def _resolve_blupal_key(db: Database) -> str:
+    return blupal_payment.resolve_api_key(db)
+
+
+async def _create_blupal_invoice_for(
+    db: Database, tenant, tg_id: int, kind: str, ref_id: int, amount_toman: int,
+    order_name: str,
+):
+    try:
+        return await blupal_payment.create_invoice_for(
+            db, tenant.tenant_id, tg_id, kind, ref_id, amount_toman, order_name,
+        )
+    except blupal_payment.BluPalPaymentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/orders/{order_id}/blupal-invoice")
+async def api_order_blupal_invoice(order_id: int, auth=Depends(require_joined)):
+    tg_id, db, tenant = auth
+    order = db.get_order(order_id)
+    if not order or order["user_id"] != tg_id:
+        raise HTTPException(status_code=404, detail="سفارش یافت نشد.")
+    if order["status"] != "pending":
+        raise HTTPException(status_code=400, detail="این سفارش قبلاً بررسی شده است.")
+    _require_payment_method_allowed(db, order["final_price"], "blupal", order["product_id"])
+    if order["is_custom_config"]:
+        order_label = f"کانفیگ شخصی #{order_id} - {order['custom_username']}"
+    else:
+        product = db.get_product(order["product_id"])
+        order_label = f"سفارش #{order_id} - {product['name'] if product else ''}"
+    result = await _create_blupal_invoice_for(
+        db, tenant, tg_id, "order", order_id, order["final_price"],
+        order_name=order_label,
+    )
+    return result
+
+
+class BluPalWalletInvoiceRequest(BaseModel):
+    topup_id: int
+
+
+@app.post("/api/wallet/blupal-invoice")
+async def api_wallet_blupal_invoice(body: BluPalWalletInvoiceRequest, auth=Depends(require_joined)):
+    tg_id, db, tenant = auth
+    topup = db.get_topup(body.topup_id)
+    if not topup or topup["user_id"] != tg_id:
+        raise HTTPException(status_code=404, detail="درخواست شارژ یافت نشد.")
+    if topup["status"] != "pending":
+        raise HTTPException(status_code=400, detail="این درخواست شارژ قبلاً بررسی شده است.")
+    _require_payment_method_allowed(db, topup["amount"], "blupal")
+    result = await _create_blupal_invoice_for(
+        db, tenant, tg_id, "wallet_topup", body.topup_id, topup["amount"],
+        order_name=f"شارژ کیف پول #{body.topup_id}",
+    )
+    result["topup_id"] = body.topup_id
+    return result
+
+
+@app.post("/api/webhooks/blupal")
+async def api_blupal_webhook(request: Request, tenant: Tenant = Depends(get_tenant)):
+    """
+    توجه: طبق مستندات بلوپال، مکانیزم امضای وب‌هوک مشخص نشده است؛ به همین دلیل
+    این هندلر هم مثل بقیه‌ی درگاه‌های این پروژه به هیچ فیلدی از بدنه (مثل status)
+    اعتماد نمی‌کند؛ فقط از آن برای پیدا کردن invoice_id استفاده می‌شود و سپس با
+    کلید API خودمان (که در بدنه‌ی وب‌هوک قابل جعل نیست) وضعیت واقعی از سمت بلوپال
+    استعلام می‌شود. blupal_payment.try_verify_and_finalize منبع حقیقت است.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        try:
+            form = await request.form()
+            body = dict(form)
+        except Exception:
+            body = {}
+
+    invoice_id = blupal_payment.extract_invoice_id_from_webhook(body or {})
+    if not invoice_id:
+        # اگر شناسه در بدنه پیدا نشد، شاید در کوئری‌استرینگ آمده باشد
+        invoice_id = request.query_params.get("invoice_id")
+    if not invoice_id:
+        raise HTTPException(status_code=400, detail="شناسه‌ی فاکتور در وب‌هوک پیدا نشد.")
+
+    db = tenant.db
+    invoice = db.get_blupal_invoice_by_invoice_id(invoice_id)
+    if not invoice:
+        db.log_webhook_event(gateway="blupal", txn_id=invoice_id, verified=False,
+                              status="ignored", error="فاکتور در دیتابیس پیدا نشد.",
+                              raw_body=json.dumps(body, ensure_ascii=False))
+        return {"status": "ignored"}
+
+    result = await blupal_payment.try_verify_and_finalize(db, invoice)
+    db.log_webhook_event(gateway="blupal", txn_id=invoice_id, verified=(result == "verified_now"),
+                          status=result, raw_body=json.dumps(body, ensure_ascii=False))
+    if result != "verified_now":
+        # already_delivered / not_paid_yet / expired / cancelled / error:...
+        return {"status": result}
+
+    if invoice["kind"] == "wallet_topup":
+        db.approve_topup(invoice["ref_id"])
+        try:
+            async with aiohttp.ClientSession() as session:
+                await session.post(
+                    f"https://api.telegram.org/bot{tenant.bot_token}/sendMessage",
+                    json={
+                        "chat_id": invoice["user_id"],
+                        "text": f"✅ پرداخت تایید شد و {invoice['amount_toman']:,} تومان به کیف پول شما اضافه شد.",
+                    },
+                )
+        except Exception:
+            pass
+        return {"status": "ok"}
+
+    # invoice["kind"] == "order"
+    order_id = invoice["ref_id"]
+    order = db.get_order(order_id)
+    if not order or order["status"] != "pending":
+        return {"status": "ok"}
+
+    if order["is_renewal"]:
+        if not db.claim_order(order_id):
+            return {"status": "ok"}
+        try:
+            result_text = await execute_renewal(db, order)
+        except RenewalError as e:
+            db.release_order_claim(order_id)
+            for admin_id in db.list_admins():
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        await session.post(
+                            f"https://api.telegram.org/bot{tenant.bot_token}/sendMessage",
+                            json={"chat_id": admin_id, "text": f"⚠️ سفارش تمدید #{order_id} با بلوپال پرداخت شد ولی تمدید ناموفق بود: {e}\nلطفاً دستی رسیدگی کنید."},
+                        )
+                except Exception:
+                    pass
+            return {"status": "ok"}
+        db.approve_renewal_order(order_id)
+        try:
+            async with aiohttp.ClientSession() as session:
+                await session.post(
+                    f"https://api.telegram.org/bot{tenant.bot_token}/sendMessage",
+                    json={"chat_id": order["user_id"], "text": result_text},
+                )
+        except Exception:
+            pass
+        return {"status": "ok"}
+
+    if order["is_custom_config"]:
+        # ساخت کانفیگ شخصی نیازمند panel provider است که در این سرور مستقل هم در
+        # دسترس است؛ برای سادگی و یکسان بودن با مسیر «بررسی دستی» در بات، همان
+        # منطق مشترک blupal_payment.finalize_paid_order استفاده می‌شود، اما
+        # چون این سرور به آبجکت aiogram Bot دسترسی ندارد، فقط سفارش را به کاربر
+        # اطلاع می‌دهیم که از داخل بات دکمه‌ی «بررسی وضعیت پرداخت» را بزند.
+        try:
+            async with aiohttp.ClientSession() as session:
+                await session.post(
+                    f"https://api.telegram.org/bot{tenant.bot_token}/sendMessage",
+                    json={
+                        "chat_id": order["user_id"],
+                        "text": "✅ پرداخت شما تایید شد!\nبرای دریافت کانفیگ شخصی، به بات برگرد و روی دکمه‌ی "
+                                "«🔄 بررسی وضعیت پرداخت» زیر همان پیام فاکتور بزن.",
+                    },
+                )
+        except Exception:
+            pass
+        return {"status": "ok"}
+
+    product = db.get_product(order["product_id"])
+    if product and product["is_auto_provision"]:
+        if not db.claim_order(order_id):
+            return {"status": "ok"}
+        quantity = order["quantity"] or 1
+        try:
+            if product["provision_server_id"]:
+                prov_results = await provision_direct(db, product, quantity, user_id=order["user_id"], order_id=order_id)
+            else:
+                prov_results = await provision_auto_config(db, product, quantity, user_id=order["user_id"], order_id=order_id)
+        except (ProvisionError, DirectProvisionError) as e:
+            db.release_order_claim(order_id)
+            admin_ids = db.list_admins()
+            async with aiohttp.ClientSession() as session:
+                for admin_id in admin_ids:
+                    try:
+                        await session.post(
+                            f"https://api.telegram.org/bot{tenant.bot_token}/sendMessage",
+                            json={
+                                "chat_id": admin_id,
+                                "text": f"⚠️ سفارش #{order_id} با بلوپال پرداخت شد ولی ساخت خودکار کانفیگ ناموفق بود: {e}\nلطفاً دستی رسیدگی کنید.",
+                            },
+                        )
+                    except Exception:
+                        pass
+            return {"status": "ok"}
+
+        db.approve_order_auto(order_id)
+        db.reward_referrer_if_first_purchase(order["user_id"], order["final_price"] or product["price"])
+        try:
+            async with aiohttp.ClientSession() as session:
+                await session.post(
+                    f"https://api.telegram.org/bot{tenant.bot_token}/sendMessage",
+                    json={
+                        "chat_id": order["user_id"],
+                        "text": f"✅ پرداخت تایید شد!\n📦 محصول: {product['name']}",
+                    },
+                )
+        except Exception:
+            pass
+        asyncio.create_task(deliver_config_to_user_web(
+            order["user_id"], product["name"], [r["subscription_url"] for r in prov_results],
+            final_price=order["final_price"], order_id=order_id, db=db, bot_token=tenant.bot_token,
+        ))
+        return {"status": "ok"}
+
+    if not db.claim_order(order_id):
+        return {"status": "ok"}
+    quantity = order["quantity"] or 1
+    results = db.take_unused_configs(order["product_id"], order["user_id"], quantity)
+    if results:
+        db.approve_order(order_id, [r["id"] for r in results])
+        db.reward_referrer_if_first_purchase(order["user_id"], order["final_price"] or (product["price"] if product else 0))
+        try:
+            async with aiohttp.ClientSession() as session:
+                await session.post(
+                    f"https://api.telegram.org/bot{tenant.bot_token}/sendMessage",
+                    json={
+                        "chat_id": order["user_id"],
+                        "text": f"✅ پرداخت تایید شد!\n📦 محصول: {product['name'] if product else ''}",
+                    },
+                )
+        except Exception:
+            pass
+        asyncio.create_task(deliver_config_to_user_web(
+            order["user_id"], product["name"] if product else "", [r["link"] for r in results],
+            final_price=order["final_price"], order_id=order_id, db=db, bot_token=tenant.bot_token,
+        ))
+    else:
+        db.release_order_claim(order_id)
+        admin_ids = db.list_admins()
+        async with aiohttp.ClientSession() as session:
+            for admin_id in admin_ids:
+                try:
+                    await session.post(
+                        f"https://api.telegram.org/bot{tenant.bot_token}/sendMessage",
+                        json={
+                            "chat_id": admin_id,
+                            "text": f"⚠️ سفارش #{order_id} با بلوپال پرداخت شد ولی موجودی هم‌زمان تمام شده. لطفاً دستی رسیدگی کنید.",
                         },
                     )
                 except Exception:
@@ -4488,6 +4749,40 @@ def api_admin_set_abangateway_settings(body: AbanGatewaySettingsUpdate, auth=Dep
     if body.enabled and (not api_key or not API_BASE_URL):
         raise HTTPException(status_code=400, detail="ابتدا کلید API آبان گیت وی را تنظیم کن. (اگر بازم فعال نمی‌شه، یعنی MINIAPP_URL روی سرور تنظیم نشده.)")
     db.set_setting("abangateway_payment_enabled", "1" if body.enabled else "0")
+    return {"status": "ok"}
+
+
+class BluPalSettingsUpdate(BaseModel):
+    enabled: bool
+    api_key: Optional[str] = None
+
+
+@app.get("/api/admin/settings/blupal")
+def api_admin_get_blupal_settings(auth=Depends(require_senior_admin)):
+    _, db, tenant = auth
+    api_key = _resolve_blupal_key(db)
+    tenant_id = db.get_setting("miniapp_tenant_id", "") or (tenant.tenant_id if tenant else "")
+    return {
+        "enabled": db.get_setting("blupal_payment_enabled", "0") == "1",
+        "has_own_key": bool(db.get_setting("blupal_api_key", "")),
+        "masked_key": (f"...{api_key[-4:]}" if api_key else ""),
+        "gateway_configured": bool(api_key),
+        "key_source": blupal_payment.resolve_api_key_source(db),
+        "webhook_url": blupal_payment.webhook_url_hint(tenant_id),
+    }
+
+
+@app.post("/api/admin/settings/blupal")
+def api_admin_set_blupal_settings(body: BluPalSettingsUpdate, auth=Depends(require_senior_admin)):
+    admin_id, db, _ = auth
+    if body.api_key is not None:
+        new_key = body.api_key.strip()
+        db.set_setting("blupal_api_key", new_key)
+        db.log_admin_action(admin_id, "blupal_key_change", "API Key بلوپال از مینی‌اپ تغییر کرد." if new_key else "API Key بلوپال از مینی‌اپ حذف شد.")
+    api_key = _resolve_blupal_key(db)
+    if body.enabled and not api_key:
+        raise HTTPException(status_code=400, detail="ابتدا کلید API بلوپال را تنظیم کن.")
+    db.set_setting("blupal_payment_enabled", "1" if body.enabled else "0")
     return {"status": "ok"}
 
 
