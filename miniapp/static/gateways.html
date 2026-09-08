@@ -189,7 +189,9 @@
     (مثل Claude یا ChatGPT) بده و بگو: «طبق این راهنما فرم رو برام پر کن». پلیس‌هولدرهای
     قابل استفاده تو URL / هدر / بدنه‌ی درخواست:</p>
     <ul style="margin:8px 0;padding-inline-start:18px;line-height:2">
-      <li><code>{amount}</code> / <code>{amount_toman}</code> — مبلغ (تومان)</li>
+      <li><code>{amount}</code> — مبلغ نهایی ارسالی (بر اساس واحد/ضریب تنظیم‌شده در بخش «مبلغ ارسالی به درگاه» — تومان/ریال/دلار)</li>
+      <li><code>{amount_toman}</code> — همیشه مبلغ خامِ واقعی سفارش به تومان، بدون ضریب/تبدیل</li>
+      <li><code>{currency}</code> — کد ارز مبلغ ارسالی (IRT/IRR/USD)</li>
       <li><code>{order_id}</code> — شناسه‌ی داخلی سفارش</li>
       <li><code>{description}</code> — توضیح سفارش</li>
       <li><code>{callback_url}</code> — آدرس بازگشت مرورگر کاربر بعد از پرداخت</li>
@@ -230,6 +232,22 @@
         <input type="checkbox" id="f_enabled"><label for="f_enabled">فعال</label>
       </div>
     </div>
+
+    <details open><summary>💰 مبلغ ارسالی به درگاه</summary>
+      <div>
+      <div class="row">
+        <div><label>واحد/ارز مبلغ ارسالی به <code>{amount}</code></label>
+          <select id="amount_currency">
+            <option value="toman">تومان</option>
+            <option value="rial">ریال</option>
+            <option value="usd">دلار (درگاه ارزی — بر اساس نرخ دلار تنظیمات)</option>
+          </select>
+        </div>
+        <div><label>ضریب مبلغ (پیش‌فرض ۱)</label><input type="number" id="amount_multiplier" min="0" step="0.0001" value="1"></div>
+      </div>
+      <p class="hint">اگه «دلار» رو انتخاب کنی، مبلغ تومانیِ سفارش با نرخ دلار (تنظیمات → کریپتو → نرخ دلار به تومان، یا نرخ خودکار) به دلار تبدیل و همون (بعد از اعمال ضریب) ارسال می‌شه؛ برای تومان/ریال هم ضریب روی همون مبلغ (بعد از تبدیل ریال) اعمال می‌شه. مبلغ تومانیِ واقعیِ سفارش هميشه بدون تغییر و جدا از این تنظیمات هم در <code>{amount_toman}</code> در دسترسه.</p>
+      </div>
+    </details>
 
     <details open><summary>🔑 اعتبارنامه (API Key و مشابه)</summary>
       <div>
@@ -442,6 +460,8 @@ function collectConfig(){
       amount_path: document.getElementById("w_map_amount").value.trim(),
     },
     amount_tolerance_percent: parseFloat(document.getElementById("amount_tolerance").value) || 0,
+    amount_currency: document.getElementById("amount_currency").value,
+    amount_multiplier: parseFloat(document.getElementById("amount_multiplier").value) || 1,
   };
 }
 
@@ -496,6 +516,8 @@ function fillForm(gw){
   document.getElementById("w_map_success").value = (wm.success_values || []).join(",");
   document.getElementById("w_map_amount").value = wm.amount_path || "";
   document.getElementById("amount_tolerance").value = (c.amount_tolerance_percent != null ? c.amount_tolerance_percent : 1);
+  document.getElementById("amount_currency").value = c.amount_currency || "toman";
+  document.getElementById("amount_multiplier").value = (c.amount_multiplier != null ? c.amount_multiplier : 1);
 
   window.scrollTo({top: document.getElementById("gwForm").offsetTop - 10, behavior: "smooth"});
 }
@@ -546,7 +568,7 @@ async function testGateway(){
   if (!id){ showMsg("اول درگاه را ذخیره کن، بعد تست بگیر.", false); return; }
   try {
     const r = await api(`/api/admin/gateways/${id}/test`, "POST", { amount_toman: 1000 });
-    if (r.success) showMsg(`✅ فاکتور آزمایشی ساخته شد. لینک: ${r.invoice_url || "(بدون لینک)"} — txn: ${r.txn_id}`, true);
+    if (r.success) showMsg(`✅ فاکتور آزمایشی ساخته شد (مبلغ ارسالی: ${r.sent_amount} ${r.sent_currency}). لینک: ${r.invoice_url || "(بدون لینک)"} — txn: ${r.txn_id}`, true);
     else showMsg(`❌ ${r.error}`, false);
   } catch(e) { showMsg(e.message, false); }
 }
