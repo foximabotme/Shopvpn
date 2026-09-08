@@ -30,10 +30,13 @@ def _style_options():
 
 
 def build_registry(db) -> dict:
-    # نکته: منوی اصلی بات (کیبورد پایین/شیشه‌ای) از قبل یک ویرایشگر
-    # درگ‌اند‌دراپ کامل (متن + رنگ + ترتیب + چیدمان ردیف‌ها) در تب «تنظیمات و
-    # برندینگ ← چیدمان منو» دارد؛ برای جلوگیری از دوباره‌کاری و دو محل مجزا
-    # برای یک چیز، اینجا تکرار نشده - این تب مکمل آن است، نه جایگزینش.
+    # نکته: منوی اصلی بات (کیبورد پایین/شیشه‌ای) متادیتای مخصوص خودش را در
+    # MENU_BUTTON_META و APIهای /api/settings/menu-order|menu-layout دارد
+    # (ترتیب + چیدمان ردیف‌ها + فعال/غیرفعال + متن/رنگ). فرانت‌اند تب «دکمه‌های
+    # ربات» آن را جداگانه از همان API می‌خواند و به‌صورت یک گروه دیگر، کنار
+    # گروه‌های این رجیستری، در همان تب نمایش می‌دهد - تا کل چیدمان دکمه‌های بات
+    # فقط از یک‌جا (تب دکمه‌های ربات) قابل مدیریت باشد. به همین دلیل عمداً اینجا
+    # تکرار نشده.
     groups = []
 
     # -------------------------------------------------------- پنل مدیریت: دسته‌ها
@@ -96,9 +99,12 @@ def build_registry(db) -> dict:
         "reorderable": True, "supports_row_break": False,
         "items": [{
             "key": key, "label": dbmod.BUYFLOW_META[key]["label"],
-            "has_text": False, "has_style": False, "text": None, "style": None, "row_break_before": None,
+            "has_text": True, "has_style": True,
+            "text": db.get_setting(f"{key}_text", dbmod.BUYFLOW_META[key]["default_text"]),
+            "style": db.get_setting(f"{key}_style", ""),
+            "row_break_before": None,
         } for key in confirm_order],
-        "note": "دکمه‌ی «بازگشت» همیشه ردیف آخر ثابت می‌ماند.",
+        "note": "متن/رنگ این دو دکمه با گروه «مسیر خرید» بالا مشترک است؛ همین‌جا هم قابل تغییرند. دکمه‌ی «بازگشت» همیشه ردیف آخر ثابت می‌ماند.",
     })
 
     # ------------------------------------------------------------ حساب کاربری من
@@ -172,7 +178,7 @@ def _group_valid_keys(db, group: str):
     return []
 
 
-_TEXT_ONLY_GROUPS = {"buyflow_confirm"}  # این گروه‌ها فقط ترتیب دارند، متن/رنگ ندارند
+_TEXT_ONLY_GROUPS = set()  # دیگر گروهی که فقط ترتیب داشته باشد و متن/رنگ نداشته باشد، وجود ندارد
 
 
 def update_item(db, group: str, key: str, text: str = None, style: str = None):
@@ -194,7 +200,7 @@ def update_item(db, group: str, key: str, text: str = None, style: str = None):
             db.set_setting(f"catlbl_{key}", text)
         elif group.startswith("admin_items__"):
             db.set_setting(f"{key}_label", text)
-        elif group in ("buyflow", "account_hub"):
+        elif group in ("buyflow", "account_hub", "buyflow_confirm"):
             db.set_setting(f"{key}_text", text)
         elif group == "payment_methods":
             if key.startswith("customgw:"):
@@ -212,7 +218,7 @@ def update_item(db, group: str, key: str, text: str = None, style: str = None):
             db.set_setting(f"catlbl_{key}_style", style)
         elif group.startswith("admin_items__"):
             db.set_setting(f"{key}_style", style)
-        elif group in ("buyflow", "account_hub"):
+        elif group in ("buyflow", "account_hub", "buyflow_confirm"):
             db.set_setting(f"{key}_style", style)
         elif group == "payment_methods":
             if key.startswith("customgw:"):
