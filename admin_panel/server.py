@@ -3218,9 +3218,17 @@ def api_menu_order_get(admin=Depends(require_permission("settings"))):
         item = {
             "key": key, "label": meta["label"], "admin_only": meta["admin_only"],
             "togglable": meta["toggle_key"] is not None,
+            # این دو فیلد برای این‌است که تب «دکمه‌های ربات» بتواند متن/رنگ این
+            # دکمه‌ها را هم از همین‌جا (کنار ترتیب/فعال‌سازی) نمایش و ویرایش کند.
+            "has_text": bool(meta.get("has_text")),
+            "has_style": bool(meta.get("has_style")),
         }
         if meta["toggle_key"]:
             item["enabled"] = settings.get(meta["toggle_key"], "1") == "1"
+        if meta.get("has_text"):
+            item["text"] = settings.get(key, meta.get("default_text") or "")
+        if meta.get("has_style"):
+            item["style"] = settings.get(f"{key}_style", "")
         # break_before یعنی این دکمه یک ردیف تازه در منو شروع می‌کند (کنار دکمه‌ی
         # قبلی‌اش قرار نمی‌گیرد). اگر کاربر هنوز چیدمان سفارشی نساخته باشد
         # (break_set is None)، null برمی‌گردد تا فرانت‌اند بداند هنوز از حالت
@@ -3232,14 +3240,24 @@ def api_menu_order_get(admin=Depends(require_permission("settings"))):
 
 class MenuButtonToggle(BaseModel):
     key: str
-    enabled: bool
+    enabled: Optional[bool] = None
+    text: Optional[str] = None
+    style: Optional[str] = None
 
 
 def _apply_menu_button_toggles(buttons: Optional[list[MenuButtonToggle]]):
     for btn in buttons or []:
         meta = MENU_BUTTON_META.get(btn.key)
-        if meta and meta["toggle_key"]:
+        if not meta:
+            continue
+        if meta["toggle_key"] and btn.enabled is not None:
             db.set_setting(meta["toggle_key"], "1" if btn.enabled else "0")
+        if btn.text is not None and meta.get("has_text"):
+            text = btn.text.strip()
+            if text:
+                db.set_setting(btn.key, text)
+        if btn.style is not None and meta.get("has_style") and btn.style in button_registry.STYLE_CHOICES:
+            db.set_setting(f"{btn.key}_style", btn.style)
 
 
 class MenuOrderBody(BaseModel):
