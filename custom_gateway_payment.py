@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 
 from config import API_BASE_URL
 import payment_engine
+import crypto_payment
 
 logger = logging.getLogger("custom_gateway_payment")
 
@@ -25,6 +26,47 @@ logger = logging.getLogger("custom_gateway_payment")
 class CustomGatewayPaymentError(Exception):
     """خطای قابل‌نمایش به کاربر/ادمین در فلوی یک درگاه سفارشی."""
     pass
+
+
+async def compute_send_amount(db, config: dict, amount_toman: int) -> dict:
+    """مبلغ نهایی/ارزی که باید به {amount} این درگاه پاس داده بشه رو، بر اساس
+    تنظیمات خودِ همین درگاه (config)، از روی مبلغ واقعی تومانیِ سفارش محاسبه
+    می‌کنه. سه تنظیم قابل‌ترکیب:
+
+    - amount_multiplier: ضریبی که مبلغ نهایی (بعد از تبدیل واحد/ارز) در آن
+      ضرب می‌شود (پیش‌فرض ۱ - بدون تغییر). برای هر دو حالت ریالی/تومانی و
+      ارزی/دلاری جدا قابل تنظیم است (چون هرکدام روی مبلغِ حالت خودشان اعمال
+      می‌شود، نه روی یک مبلغ مشترک).
+    - amount_currency: 'toman' (پیش‌فرض) | 'rial' | 'usd'
+        * toman/rial فقط واحد شمارشِ همون مبلغ تومانی سفارش‌اند (rial = toman × ۱۰)
+        * usd یعنی درگاه ارزی است: مبلغ بر اساس نرخ دلار تنظیم‌شده در
+          «usd_to_toman_rate» (همون نرخی که برای پرداخت کریپتو هم استفاده
+          می‌شود) به دلار تبدیل می‌شود و ضریب روی همون مبلغ دلاری اعمال می‌شود.
+
+    خروجی: {"amount": <عدد ارسالی به {amount}>, "currency": <کد ارز برای {currency}>}
+    توجه: amount_toman خودِ سفارش (بدون ضریب/تبدیل) هميشه جدا و دست‌نخورده به
+    {amount_toman} پاس داده می‌شود و همان هم مبنای مقایسه‌ی مبلغ در verify/
+    webhook (payment_engine.amounts_match) باقی می‌ماند."""
+    try:
+        multiplier = float(config.get("amount_multiplier") or 1)
+    except (TypeError, ValueError):
+        multiplier = 1.0
+    if multiplier <= 0:
+        multiplier = 1.0
+
+    currency_mode = (config.get("amount_currency") or "toman").strip().lower()
+
+    if currency_mode == "usd":
+        try:
+            usd = await crypto_payment.toman_to_usd(db, amount_toman)
+        except crypto_payment.CryptoPaymentError as e:
+            raise CustomGatewayPaymentError(str(e))
+        return {"amount": round(usd * multiplier, 2), "currency": "USD"}
+
+    if currency_mode == "rial":
+        return {"amount": round(amount_toman * 10 * multiplier), "currency": "IRR"}
+
+    return {"amount": round(amount_toman * multiplier), "currency": "IRT"}
 
 
 def list_enabled_gateways(db):
@@ -99,11 +141,12 @@ async def create_invoice_for(db, tenant_id: str, tg_id: int, gateway_key: str, k
     # اینجا یک نسخه‌ی کوتاه‌شده و یکتا فقط برای ارسال به درگاه می‌سازیم؛ our_ref
     # کامل همچنان برای callback_url/webhook_url و ذخیره‌ی txn_id داخلی حفظ می‌شود.
     short_order_id = f"{ref_id}-{int(datetime.now(timezone.utc).timestamp())}"[:20]
+    computed = await compute_send_amount(db, config, amount_toman)
     gw = payment_engine.GenericGateway(config)
     try:
         result = await gw.create_invoice(
-            amount=amount_toman, amount_toman=amount_toman, order_id=short_order_id,
-            currency="IRT", description=order_name, tenant_id=tenant_slug,
+            amount=computed["amount"], amount_toman=amount_toman, order_id=short_order_id,
+            currency=computed["currency"], description=order_name, tenant_id=tenant_slug,
             callback_url=f"{API_BASE_URL}/api/pay/custom/{gateway_key}/return?b={tenant_id or ''}&txn={our_ref}",
             webhook_url=f"{API_BASE_URL}/api/webhooks/custom/{gateway_key}?b={tenant_id or ''}",
             # همیشه در دسترس، بدون نیاز به پرسیدن از کاربر (مستقیم از پروفایل تلگرام):
