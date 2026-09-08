@@ -5522,6 +5522,19 @@ function _gwFormHtml(gw) {
         <input class="input" id="gw-amount-tolerance" type="number" min="0" step="0.1" value="${c.amount_tolerance_percent != null ? c.amount_tolerance_percent : 1}"></label>
     </div>
 
+    <div class="card-sub" style="margin:16px 0 6px"><b>💰 مبلغ ارسالی به درگاه</b></div>
+    <div class="form-grid">
+      <label class="field"><span>واحد/ارز مبلغ ارسالی به <code>{amount}</code></span>
+        <select class="input" id="gw-amount-currency">
+          <option value="toman" ${(c.amount_currency || 'toman') === 'toman' ? 'selected' : ''}>تومان</option>
+          <option value="rial" ${c.amount_currency === 'rial' ? 'selected' : ''}>ریال</option>
+          <option value="usd" ${c.amount_currency === 'usd' ? 'selected' : ''}>دلار (درگاه ارزی — بر اساس نرخ دلار تنظیمات)</option>
+        </select></label>
+      <label class="field"><span>ضریب مبلغ (روی مبلغ نهایی همین درگاه ضرب می‌شود — پیش‌فرض ۱)</span>
+        <input class="input" id="gw-amount-multiplier" type="number" min="0" step="0.0001" value="${c.amount_multiplier != null ? c.amount_multiplier : 1}"></label>
+    </div>
+    <div class="card-sub" style="margin:6px 0 0;color:var(--muted,#9ca3af);font-size:12px">اگه «دلار» رو انتخاب کنی، مبلغ تومانیِ سفارش با نرخ دلار (تنظیمات → کریپتو → نرخ دلار به تومان، یا نرخ خودکار) به دلار تبدیل می‌شه و همون (بعد از اعمال ضریب) به <code>{amount}</code> پاس داده می‌شه؛ برای تومان/ریال هم ضریب روی همون مبلغ (بعد از تبدیل ریال) اعمال می‌شه. مبلغ تومانیِ واقعیِ سفارش هميشه بدون تغییر و جدا از این تنظیمات هم در <code>{amount_toman}</code> در دسترسه.</div>
+
     <div class="card-sub" style="margin:16px 0 6px"><b>🔑 اعتبارنامه (API Key و مشابه)</b></div>
     <div id="gw-cred-rows"></div>
     <button type="button" class="btn btn-sm" id="gw-add-cred">+ فیلد جدید</button>
@@ -5643,6 +5656,8 @@ function _gwCollectConfig(body) {
       amount_path: $('#gw-w-map-amount', body).value.trim(),
     },
     amount_tolerance_percent: parseFloat($('#gw-amount-tolerance', body).value) || 0,
+    amount_currency: $('#gw-amount-currency', body).value,
+    amount_multiplier: parseFloat($('#gw-amount-multiplier', body).value) || 1,
   };
 }
 
@@ -5696,7 +5711,7 @@ function _gwOpenForm(gw) {
         try {
           const r = await apiPost(`/gateways/${gw.id}/test`, { amount_toman: 1000 });
           errBox.style.color = r.success ? 'var(--ok,#22c55e)' : 'var(--danger,#ef4444)';
-          errBox.textContent = r.success ? `✅ فاکتور ساخته شد — لینک: ${r.invoice_url || '(بدون لینک)'} — txn: ${r.txn_id}` : `❌ ${r.error}`;
+          errBox.textContent = r.success ? `✅ فاکتور ساخته شد (مبلغ ارسالی: ${r.sent_amount} ${r.sent_currency}) — لینک: ${r.invoice_url || '(بدون لینک)'} — txn: ${r.txn_id}` : `❌ ${r.error}`;
         } catch (e) { errBox.textContent = e.message; }
       });
       $('#gw-del', body).addEventListener('click', async () => {
@@ -5713,7 +5728,9 @@ function _gwGuideHtml() {
     (مثل Claude یا ChatGPT) بده و بگو: «طبق این راهنما فرم رو برام پر کن». پلیس‌هولدرهای
     قابل استفاده تو URL / هدر / بدنه‌ی درخواست:</p>
     <ul style="margin:6px 0;padding-inline-start:18px;line-height:2">
-      <li><code>{amount}</code> / <code>{amount_toman}</code> — مبلغ (تومان)</li>
+      <li><code>{amount}</code> — مبلغ نهایی ارسالی (بر اساس واحد/ضریب تنظیم‌شده در بخش «مبلغ ارسالی به درگاه» — تومان/ریال/دلار)</li>
+      <li><code>{amount_toman}</code> — همیشه مبلغ خامِ واقعی سفارش به تومان، بدون ضریب/تبدیل</li>
+      <li><code>{currency}</code> — کد ارز مبلغ ارسالی (IRT/IRR/USD)</li>
       <li><code>{order_id}</code> — شناسه‌ی داخلی سفارش</li>
       <li><code>{description}</code> — توضیح سفارش</li>
       <li><code>{callback_url}</code> — آدرس بازگشت مرورگر کاربر بعد از پرداخت</li>
