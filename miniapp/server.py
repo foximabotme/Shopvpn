@@ -60,6 +60,7 @@ from config import BOT_TOKEN, DB_PATH, OWNER_ID, MAX_TEST_PER_USER, resolve_db_p
 import plisio_client
 import exchange_rate
 import crypto_payment
+import custom_gateway_payment
 import abangateway_client
 import abangateway_payment
 import blupal_client
@@ -2272,19 +2273,26 @@ async def api_admin_test_gateway(gateway_id: int, body: CustomGatewayTestRequest
     توجه: چون این یک درخواست واقعی به API درگاه است، ممکن است یک فاکتور واقعی نزد آن درگاه بسازد."""
     _, db, tenant = auth
     row, config = _load_gateway(db, gateway_id=gateway_id)
+    try:
+        computed = await custom_gateway_payment.compute_send_amount(db, config, body.amount_toman)
+    except custom_gateway_payment.CustomGatewayPaymentError as e:
+        return {"success": False, "error": str(e)}
     gw = payment_engine.GenericGateway(config)
     our_ref = f"test-{gateway_id}-{int(datetime.now(timezone.utc).timestamp())}"
     try:
         result = await gw.create_invoice(
-            amount=body.amount_toman, amount_toman=body.amount_toman,
-            order_id=our_ref, currency="IRT", description="تست اتصال درگاه",
+            amount=computed["amount"], amount_toman=body.amount_toman,
+            order_id=our_ref, currency=computed["currency"], description="تست اتصال درگاه",
             tenant_id=tenant.tenant_id or "main",
             callback_url=f"{API_BASE_URL}/api/pay/custom/{row['gateway_key']}/return?b={tenant.tenant_id}&txn={our_ref}",
             webhook_url=f"{API_BASE_URL}/api/webhooks/custom/{row['gateway_key']}?b={tenant.tenant_id}",
         )
     except payment_engine.PaymentEngineError as e:
         return {"success": False, "error": str(e)}
-    return {"success": True, "invoice_url": result.get("invoice_url"), "txn_id": result.get("txn_id")}
+    return {
+        "success": True, "invoice_url": result.get("invoice_url"), "txn_id": result.get("txn_id"),
+        "sent_amount": computed["amount"], "sent_currency": computed["currency"],
+    }
 
 
 # ------------------------------- کارت‌به‌کارت با تایید خودکار (پیامک بانک) - ادمین -----
@@ -2561,11 +2569,15 @@ async def _create_custom_gateway_invoice_for(db: Database, tenant: "Tenant", tg_
     # اینجا هم - مثل custom_gateway_payment.create_invoice_for در بات اصلی - یک
     # نسخه‌ی کوتاه‌شده فقط برای ارسال به درگاه می‌سازیم.
     short_order_id = f"{ref_id}-{int(datetime.now(timezone.utc).timestamp())}"[:20]
+    try:
+        computed = await custom_gateway_payment.compute_send_amount(db, config, amount_toman)
+    except custom_gateway_payment.CustomGatewayPaymentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     gw = payment_engine.GenericGateway(config)
     try:
         result = await gw.create_invoice(
-            amount=amount_toman, amount_toman=amount_toman, order_id=short_order_id,
-            currency="IRT", description=order_name, tenant_id=tenant_slug,
+            amount=computed["amount"], amount_toman=amount_toman, order_id=short_order_id,
+            currency=computed["currency"], description=order_name, tenant_id=tenant_slug,
             callback_url=f"{API_BASE_URL}/api/pay/custom/{gateway_key}/return?b={tenant.tenant_id}&txn={our_ref}",
             webhook_url=f"{API_BASE_URL}/api/webhooks/custom/{gateway_key}?b={tenant.tenant_id}",
         )
@@ -2812,8 +2824,14 @@ async def api_custom_gateway_return(gateway_key: str, request: Request, txn: str
     ok = False
     try:
         if config.get("verify_enabled"):
+            try:
+                computed = await custom_gateway_payment.compute_send_amount(db, config, invoice["amount_toman"])
+                verify_amount = computed["amount"]
+            except custom_gateway_payment.CustomGatewayPaymentError:
+                # اگه الان (مثلاً نبود موقت نرخ دلار) قابل‌محاسبه نبود، مثل قبل از amount_toman استفاده کن
+                verify_amount = invoice["amount_toman"]
             result = await gw.verify(
-                amount=invoice["amount_toman"], amount_toman=invoice["amount_toman"],
+                amount=verify_amount, amount_toman=invoice["amount_toman"],
                 order_id=invoice["txn_id"], gateway_ref=invoice["gateway_ref"] or "",
                 query=query, tenant_id=tenant.tenant_id or "main",
             )
