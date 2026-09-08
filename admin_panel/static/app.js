@@ -5025,6 +5025,10 @@ const SETTINGS_GROUPS = [
     { key: 'abangateway_payment_enabled', label: 'فعال بودن درگاه آبان گیت‌وی', type: 'bool' },
     { key: 'abangateway_api_key', label: 'کلید API آبان گیت‌وی', type: 'password' },
   ]},
+  { tab: 'payment', title: '💳 بلوپال (کارت به کارت خودکار)', fields: [
+    { key: 'blupal_payment_enabled', label: 'فعال بودن درگاه بلوپال', type: 'bool' },
+    { key: 'blupal_api_key', label: 'کلید API بلوپال', type: 'password' },
+  ]},
   { tab: 'payment', title: '⭐ NoapayBot - استارز تلگرام (تایید آنی)', fields: [
     { key: 'noapay_payment_enabled', label: 'فعال بودن درگاه NoapayBot', type: 'bool' },
     { key: 'noapay_api_key', label: 'کلید API NoapayBot', type: 'password' },
@@ -6109,6 +6113,7 @@ const ACTION_LABEL = {
   panel_server_delete: 'حذف سرور پنل', panel_server_template_update: 'ویرایش قالب سرور پنل',
   panel_server_usage_toggle: 'فعال/غیرفعال کردن مصرف سرور', plisio_key_change: 'تغییر کلید Plisio',
   abangateway_key_change: 'تغییر کلید آبان گیت‌وی',
+  blupal_key_change: 'تغییر کلید بلوپال',
   pricing_tier_add: 'افزودن رده قیمتی', pricing_tier_delete: 'حذف رده قیمتی', product_add: 'افزودن محصول',
   product_delete: 'حذف محصول', product_edit: 'ویرایش محصول', product_price_edit: 'ویرایش قیمت محصول',
   product_server_edit: 'تغییر پنل/اینباند محصول', product_volume_edit: 'تغییر حجم محصول',
