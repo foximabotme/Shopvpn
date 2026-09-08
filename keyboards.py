@@ -572,7 +572,8 @@ def reseller_panel_kb() -> InlineKeyboardMarkup:
 def payment_choice_kb(crypto_enabled: bool, abangateway_enabled: bool = False,
                        custom_gateways: list = None, card_to_card_enabled: bool = True,
                        amount: int = None, db=None, allowed_methods=None,
-                       card_auto_enabled: bool = False, noapay_enabled: bool = False) -> InlineKeyboardMarkup:
+                       card_auto_enabled: bool = False, noapay_enabled: bool = False,
+                       blupal_enabled: bool = False) -> InlineKeyboardMarkup:
     """کیبورد مرحله‌ی انتخاب روش پرداخت: کاربر ابتدا این لیست را می‌بیند و روش پرداخت را
     انتخاب می‌کند (به‌جای اینکه مستقیم شماره کارت نمایش داده شود). اگر درگاه کریپتو/آبان
     گیت وی/درگاه‌های سفارشی/کارت‌به‌کارت خودکار فعال باشند، دکمه‌ی مربوطه هم نمایش داده
@@ -601,7 +602,8 @@ def payment_choice_kb(crypto_enabled: bool, abangateway_enabled: bool = False,
     # وب، جابه‌جا کند.
     static_enabled = {
         "card": card_to_card_enabled, "card_auto": card_auto_enabled,
-        "abangateway": abangateway_enabled, "noapay": noapay_enabled, "crypto": crypto_enabled,
+        "abangateway": abangateway_enabled, "blupal": blupal_enabled,
+        "noapay": noapay_enabled, "crypto": crypto_enabled,
     }
     gw_by_key = {f"customgw:{gw['id']}": gw for gw in (custom_gateways or [])}
     valid_keys = list(DEFAULT_PAYMENT_METHOD_ORDER) + list(gw_by_key.keys())
@@ -612,7 +614,7 @@ def payment_choice_kb(crypto_enabled: bool, abangateway_enabled: bool = False,
 
     rows = []
     static_cb = {"card": "pay_card2card", "card_auto": "pay_card_auto", "abangateway": "pay_abangateway",
-                 "noapay": "pay_noapay", "crypto": "pay_crypto"}
+                 "blupal": "pay_blupal", "noapay": "pay_noapay", "crypto": "pay_crypto"}
     for key in order:
         if key in PAYMENT_METHOD_META:
             if not static_enabled.get(key) or not _ok(key):
@@ -917,6 +919,7 @@ ADMIN_PANEL_ITEMS = [
     ("adm_pending_topups", "👛 درخواست‌های شارژ کیف پول", "adm_pending_topups"),
     ("adm_crypto_payments", "🪙 پرداخت‌های کریپتو", "adm_crypto_payments"),
     ("adm_abangateway_payments", "💳 پرداخت‌های آبان گیت وی", "adm_abangateway_payments"),
+    ("adm_blupal_payments", "💳 پرداخت‌های بلوپال", "adm_blupal_payments"),
     ("adm_noapay_payments", "⭐ پرداخت‌های NoapayBot", "adm_noapay_payments"),
     ("adm_discounts_menu", "🎟 مدیریت کدهای تخفیف", "adm_discounts_menu"),
     ("adm_wheel_settings", "🎡 مدیریت گردونه شانس", "adm_wheel_settings"),
@@ -937,6 +940,7 @@ ADMIN_PANEL_ITEMS = [
     ("adm_card_autodelete", "⏱ حذف خودکار پیام شماره کارت", "adm_card_autodelete"),
     ("adm_set_plisio", "🪙 تنظیم درگاه کریپتو (Plisio)", "adm_set_plisio"),
     ("adm_set_abangateway", "💳 تنظیم درگاه آبان گیت وی", "adm_set_abangateway"),
+    ("adm_set_blupal", "💳 تنظیم درگاه بلوپال", "adm_set_blupal"),
     ("adm_set_noapay", "⭐ تنظیم درگاه NoapayBot", "adm_set_noapay"),
     ("adm_card_auto", "📶 کارت‌به‌کارت با تایید خودکار (پیامک بانک)", "adm_card_auto"),
     ("adm_custom_gateways", "💠 درگاه‌های پرداخت سفارشی (فعال/غیرفعال)", "adm_custom_gateways"),
@@ -970,6 +974,7 @@ ADMIN_PANEL_CATEGORIES = [
         "adm_pending_topups",
         "adm_crypto_payments",
         "adm_abangateway_payments",
+        "adm_blupal_payments",
         "adm_noapay_payments",
         "adm_reseller_requests_menu",
     ]),
@@ -1001,6 +1006,7 @@ ADMIN_PANEL_CATEGORIES = [
         "adm_card_autodelete",
         "adm_set_plisio",
         "adm_set_abangateway",
+        "adm_set_blupal",
         "adm_set_noapay",
         "adm_card_auto",
         "adm_custom_gateways",
@@ -1939,6 +1945,35 @@ def abangateway_invoices_kb(invoices) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def blupal_invoices_kb(invoices) -> InlineKeyboardMarkup:
+    rows = []
+    status_text = {
+        "new": "🟡 جدید",
+        "pending": "🟠 در انتظار پرداخت",
+        "completed": "🟢 تکمیل‌شده",
+        "expired": "🔴 منقضی‌شده",
+        "cancelled": "⚪️ لغوشده",
+        "error": "🔴 خطا",
+    }
+    kind_text = {"order": "سفارش", "wallet_topup": "شارژ کیف پول"}
+    for inv in invoices:
+        st = status_text.get(inv["status"], inv["status"] or "---")
+        kind = kind_text.get(inv["kind"], inv["kind"])
+        row = [
+            InlineKeyboardButton(
+                text=f"{st} | {kind} #{inv['ref_id']} | {inv['amount_toman']:,} تومان",
+                callback_data=f"view_blupal_invoice:{inv['id']}",
+            )
+        ]
+        if inv["status"] in ("new", "pending"):
+            row.append(InlineKeyboardButton(text="🔄 بررسی", callback_data=f"check_blupal_invoice:{inv['id']}"))
+            row.append(InlineKeyboardButton(text="❌ لغو", callback_data=f"cancel_blupal_invoice:{inv['id']}"))
+        rows.append(row)
+    rows.append([InlineKeyboardButton(text="🔄 بروزرسانی", callback_data="adm_blupal_payments")])
+    rows.append([InlineKeyboardButton(text="⬅️ بازگشت", callback_data="adm_cat:daily")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def noapay_invoices_kb(invoices) -> InlineKeyboardMarkup:
     rows = []
     status_text = {
@@ -2239,6 +2274,7 @@ MIN_AMOUNT_SETTINGS_ITEMS = [
     ("min_amount_wallet_topup", "👛 حداقل مبلغ شارژ کیف پول"),
     ("min_amount_card", "💳 حداقل مبلغ کارت‌به‌کارت (دستی)"),
     ("min_amount_abangateway", "💳 حداقل مبلغ آبان گیت وی"),
+    ("min_amount_blupal", "💳 حداقل مبلغ بلوپال"),
     ("min_amount_noapay", "⭐ حداقل مبلغ NoapayBot"),
     ("min_amount_crypto", "🪙 حداقل مبلغ پرداخت کریپتو"),
 ]

@@ -99,6 +99,7 @@ PLISIO_API_KEY = os.getenv("PLISIO_API_KEY", "")
 # کلید API درگاه پرداخت کارت‌به‌کارت خودکار آبان گیت وی (fallback سراسری؛ هر بات
 # می‌تواند کلید خودش را از داخل پنل مدیریت بات تنظیم کند - دکمه‌ی «تنظیم درگاه آبان گیت وی»)
 ABANGATEWAY_API_KEY = os.getenv("ABANGATEWAY_API_KEY", "")
+BLUPAL_API_KEY = os.getenv("BLUPAL_API_KEY", "")
 
 # کلید API و رمز وب‌هوک درگاه NoapayBot/StarBot
 NOAPAY_API_KEY = os.getenv("NOAPAY_API_KEY", "")

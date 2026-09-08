@@ -196,6 +196,9 @@ DEFAULT_SETTINGS = {
     # پرداخت کارت‌به‌کارت خودکار (آبان گیت وی)
     "abangateway_payment_enabled": "0",
     "abangateway_api_key": "",  # کلید API آبان گیت وی؛ از داخل بات (دکمه‌ی «تنظیم درگاه آبان گیت وی») قابل تنظیم است
+    # پرداخت کارت‌به‌کارت خودکار (بلوپال)
+    "blupal_payment_enabled": "0",
+    "blupal_api_key": "",  # کلید API بلوپال؛ از داخل بات (دکمه‌ی «تنظیم درگاه بلوپال») قابل تنظیم است
     # پرداخت با خرید استارز تلگرام (NoapayBot/StarBot)
     "noapay_payment_enabled": "0",
     "noapay_api_key": "",            # کلید API NoapayBot؛ از داخل بات (دکمه‌ی «تنظیم درگاه NoapayBot») قابل تنظیم است
@@ -237,6 +240,7 @@ DEFAULT_SETTINGS = {
     "min_amount_wallet_topup": "1000",  # حداقل مبلغ شارژ کیف پول
     "min_amount_card": "0",             # حداقل مبلغ برای پرداخت کارت‌به‌کارت دستی
     "min_amount_abangateway": "0",      # حداقل مبلغ برای آبان گیت وی
+    "min_amount_blupal": "0",           # حداقل مبلغ برای بلوپال
     "min_amount_noapay": "0",           # حداقل مبلغ برای NoapayBot
     "min_amount_crypto": "0",           # حداقل مبلغ برای پرداخت کریپتو
     "min_amount_card_auto": "0",        # حداقل مبلغ برای کارت‌به‌کارت خودکار
@@ -254,6 +258,7 @@ BUILTIN_PAYMENT_METHODS = [
     {"key": "wallet", "label": "👛 کیف پول", "enable_setting": None},
     {"key": "card", "label": "💳 کارت‌به‌کارت (ارسال رسید)", "enable_setting": "card_to_card_enabled"},
     {"key": "abangateway", "label": "💳 آبان گیت وی (تایید آنی)", "enable_setting": "abangateway_payment_enabled"},
+    {"key": "blupal", "label": "💳 بلوپال (تایید آنی)", "enable_setting": "blupal_payment_enabled"},
     {"key": "noapay", "label": "⭐ NoapayBot - استارز تلگرام (تایید آنی)", "enable_setting": "noapay_payment_enabled"},
     {"key": "crypto", "label": "🪙 ارز دیجیتال (تایید آنی)", "enable_setting": "crypto_payment_enabled"},
     {"key": "card_auto", "label": "💳 کارت‌به‌کارت (تایید خودکار پیامکی)", "enable_setting": "card_to_card_auto_enabled"},
@@ -311,10 +316,11 @@ PAYMENT_METHOD_META = {
     "card": {"label": "کارت‌به‌کارت (ارسال رسید)", "default_text": "💳 کارت‌به‌کارت (ارسال رسید)"},
     "card_auto": {"label": "کارت‌به‌کارت خودکار (تاییدپیامکی)", "default_text": "💳 کارت‌به‌کارت (تایید خودکار پیامکی)"},
     "abangateway": {"label": "آبان‌گیت‌وی", "default_text": "💳 پرداخت خودکار کارت‌به‌کارت (تایید آنی)"},
+    "blupal": {"label": "بلوپال", "default_text": "💳 پرداخت خودکار کارت‌به‌کارت (تایید آنی)"},
     "noapay": {"label": "NoapayBot (استارز تلگرام)", "default_text": "⭐ NoapayBot - استارز تلگرام (تایید آنی)"},
     "crypto": {"label": "ارز دیجیتال (Plisio)", "default_text": "🪙 پرداخت با ارز دیجیتال (تایید آنی)"},
 }
-DEFAULT_PAYMENT_METHOD_ORDER = ["card", "card_auto", "abangateway", "noapay", "crypto"]
+DEFAULT_PAYMENT_METHOD_ORDER = ["card", "card_auto", "abangateway", "blupal", "noapay", "crypto"]
 
 ACCOUNT_HUB_META = {
     "acct_orders": {"label": "سرویس‌ها و سفارش‌های من", "default_text": "📦 سرویس‌ها و سفارش‌های من"},
@@ -777,6 +783,25 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS idx_abangateway_invoices_invoice_id ON abangateway_invoices(invoice_id);
                 CREATE INDEX IF NOT EXISTS idx_abangateway_invoices_ref ON abangateway_invoices(kind, ref_id);
+
+                CREATE TABLE IF NOT EXISTS blupal_invoices (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    invoice_id TEXT UNIQUE NOT NULL,  -- شناسه‌ی فاکتور در سمت بلوپال (invoice_id عددی)
+                    kind TEXT NOT NULL,                -- 'order' یا 'wallet_topup'
+                    ref_id INTEGER NOT NULL,           -- order_id یا topup_id
+                    user_id INTEGER NOT NULL,
+                    amount_toman INTEGER NOT NULL,
+                    amount_rial INTEGER NOT NULL,
+                    final_amount_rial INTEGER,          -- مبلغ دقیقی که باید واریز شود (amount + عدد تصادفی ۳ رقمی)
+                    payment_url TEXT,
+                    status TEXT DEFAULT 'new',          -- new/pending/completed/expired/cancelled/error
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_blupal_invoices_invoice_id ON blupal_invoices(invoice_id);
+                CREATE INDEX IF NOT EXISTS idx_blupal_invoices_ref ON blupal_invoices(kind, ref_id);
+
                 CREATE TABLE IF NOT EXISTS noapay_invoices (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     invoice_token TEXT UNIQUE NOT NULL,
@@ -996,7 +1021,7 @@ class Database:
 
                 CREATE TABLE IF NOT EXISTS payment_webhook_logs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    gateway TEXT NOT NULL,        -- 'plisio' / 'abangateway' / 'custom:<gateway_key>'
+                    gateway TEXT NOT NULL,        -- 'plisio' / 'abangateway' / 'blupal' / 'custom:<gateway_key>'
                     txn_id TEXT,
                     verified INTEGER DEFAULT 0,   -- آیا امضا/اعتبارسنجی تایید شد؟
                     status TEXT,                  -- وضعیتی که کال‌بک اعلام کرده (completed/pending/...)
@@ -1049,7 +1074,7 @@ class Database:
         "test_config_plans", "orders", "discount_codes", "wallet_topups",
         "crypto_invoices", "support_messages", "support_conversations",
         "admin_presence", "tickets", "ticket_messages", "admin_logs",
-        "abangateway_invoices", "noapay_invoices", "custom_gateways", "custom_gateway_invoices",
+        "abangateway_invoices", "blupal_invoices", "noapay_invoices", "custom_gateways", "custom_gateway_invoices",
         "card_to_card_cards", "card_to_card_invoices", "panel_servers",
         "custom_config_pricing_tiers", "custom_config_products",
         "custom_config_product_pricing_tiers", "custom_configs",
@@ -3571,6 +3596,9 @@ class Database:
             aban = conn.execute(
                 "SELECT COUNT(*) c, COALESCE(SUM(amount_toman),0) s FROM abangateway_invoices WHERE status IN ('paid','completed')"
             ).fetchone()
+            blupal = conn.execute(
+                "SELECT COUNT(*) c, COALESCE(SUM(amount_toman),0) s FROM blupal_invoices WHERE status IN ('paid','completed')"
+            ).fetchone()
             noapay = conn.execute(
                 "SELECT COUNT(*) c, COALESCE(SUM(amount_toman),0) s FROM noapay_invoices WHERE status='completed'"
             ).fetchone()
@@ -3582,6 +3610,7 @@ class Database:
         result = [
             {"gateway": "crypto", "label": "کریپتو (Plisio)", "count": crypto["c"], "amount_toman": crypto["s"]},
             {"gateway": "abangateway", "label": "آبان گیت‌وی", "count": aban["c"], "amount_toman": aban["s"]},
+            {"gateway": "blupal", "label": "بلوپال", "count": blupal["c"], "amount_toman": blupal["s"]},
             {"gateway": "noapay", "label": "NoapayBot (استارز)", "count": noapay["c"], "amount_toman": noapay["s"]},
         ]
         for row in custom_rows:
@@ -3691,6 +3720,95 @@ class Database:
         with self._get_conn() as conn:
             conn.execute(
                 "DELETE FROM abangateway_invoices WHERE status IN "
+                "('completed','expired','cancelled','error') "
+                "AND COALESCE(updated_at, created_at) < ?",
+                (cutoff,),
+            )
+
+    # -----------------------------------------------------------------------
+    # فاکتورهای پرداخت کارت‌به‌کارت خودکار (بلوپال)
+    # -----------------------------------------------------------------------
+
+    def create_blupal_invoice(self, invoice_id: str, kind: str, ref_id: int, user_id: int,
+                               amount_toman: int, amount_rial: int, final_amount_rial: int = None,
+                               payment_url: str = None) -> int:
+        with self._get_conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO blupal_invoices (invoice_id, kind, ref_id, user_id, amount_toman, "
+                "amount_rial, final_amount_rial, payment_url, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'new')",
+                (invoice_id, kind, ref_id, user_id, amount_toman, amount_rial, final_amount_rial, payment_url),
+            )
+            return cur.lastrowid
+
+    def get_blupal_invoice_by_invoice_id(self, invoice_id: str):
+        with self._get_conn() as conn:
+            return conn.execute(
+                "SELECT * FROM blupal_invoices WHERE invoice_id=?", (invoice_id,)
+            ).fetchone()
+
+    def get_blupal_invoice(self, id_: int):
+        with self._get_conn() as conn:
+            return conn.execute("SELECT * FROM blupal_invoices WHERE id=?", (id_,)).fetchone()
+
+    def update_blupal_invoice_status(self, invoice_id: str, status: str):
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE blupal_invoices SET status=?, updated_at=? WHERE invoice_id=?",
+                (status, datetime.utcnow().isoformat(), invoice_id),
+            )
+
+    def claim_blupal_invoice(self, invoice_id: str) -> bool:
+        """تلاش اتمیک برای علامت‌گذاری یک فاکتور بلوپال به‌عنوان 'completed'، فقط
+        اگر قبلاً completed نشده باشد. چون بلوپال (برخلاف آبان گیت وی) مرحله‌ی
+        verify یک‌بارمصرف جدا ندارد، همین claim روی دیتابیس خودمان جلوی تحویل
+        دوباره را می‌گیرد (مثلاً وقتی وب‌هوک و بررسی دستی هم‌زمان اجرا شوند)."""
+        with self._get_conn() as conn:
+            cur = conn.execute(
+                "UPDATE blupal_invoices SET status='completed', updated_at=? "
+                "WHERE invoice_id=? AND status != 'completed'",
+                (datetime.utcnow().isoformat(), invoice_id),
+            )
+            return cur.rowcount > 0
+
+    def get_pending_blupal_invoice_for_ref(self, kind: str, ref_id: int):
+        """آخرین فاکتور فعال (new/pending) ثبت‌شده برای یک سفارش یا شارژ کیف پول خاص را برمی‌گرداند."""
+        with self._get_conn() as conn:
+            return conn.execute(
+                "SELECT * FROM blupal_invoices WHERE kind=? AND ref_id=? AND status IN ('new','pending') "
+                "ORDER BY id DESC LIMIT 1",
+                (kind, ref_id),
+            ).fetchone()
+
+    def get_blupal_invoices(self, limit: int = 50):
+        """فهرست پرداخت‌های بلوپال برای پنل مدیریت؛ شامل پرداخت‌های فعال و تاریخچه."""
+        limit = max(1, min(int(limit or 50), 200))
+        with self._get_conn() as conn:
+            return conn.execute(
+                "SELECT * FROM blupal_invoices ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+
+    def expire_stale_blupal_invoices(self, hours: int = 1):
+        """فاکتورهایی که هنوز 'new'/'pending' مانده‌اند ولی بیش از یک ساعت (اعتبار
+        فاکتور بلوپال طبق مستندات) از ایجادشان گذشته را 'expired' علامت می‌زند."""
+        cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE blupal_invoices SET status='expired', updated_at=? "
+                "WHERE status IN ('new','pending') AND created_at < ?",
+                (datetime.utcnow().isoformat(), cutoff),
+            )
+
+    def cancel_and_delete_blupal_invoice(self, id_: int):
+        """لغو دستی توسط ادمین: فاکتور بلافاصله از دیتابیس حذف می‌شود."""
+        with self._get_conn() as conn:
+            conn.execute("DELETE FROM blupal_invoices WHERE id=?", (id_,))
+
+    def purge_old_blupal_invoices(self, days: int = 7):
+        """فاکتورهای نهایی‌شده‌ی بلوپال که بیش از N روز از آخرین به‌روزرسانی‌شان گذشته را حذف می‌کند."""
+        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        with self._get_conn() as conn:
+            conn.execute(
+                "DELETE FROM blupal_invoices WHERE status IN "
                 "('completed','expired','cancelled','error') "
                 "AND COALESCE(updated_at, created_at) < ?",
                 (cutoff,),
@@ -3887,7 +4005,7 @@ class Database:
 
     def resolve_payment_method(self, kind: str, ref_id: int):
         """گیت‌وی واقعی یک سفارش/شارژ (order/wallet_topup) را از روی رکورد
-        فاکتور مرتبط تشخیص می‌دهد: crypto/abangateway/custom:<key>/card_auto/card.
+        فاکتور مرتبط تشخیص می‌دهد: crypto/abangateway/blupal/custom:<key>/card_auto/card.
         None یعنی هنوز هیچ روش پرداختی برایش مشخص نشده (نه فاکتوری ساخته شده،
         نه رسیدی ارسال شده) - یعنی هنوز چیزی برای پوش‌کردن به ادمین نیست."""
         with self._get_conn() as conn:
@@ -3899,6 +4017,10 @@ class Database:
                 "SELECT 1 FROM abangateway_invoices WHERE kind=? AND ref_id=? LIMIT 1", (kind, ref_id)
             ).fetchone():
                 return "abangateway"
+            if conn.execute(
+                "SELECT 1 FROM blupal_invoices WHERE kind=? AND ref_id=? LIMIT 1", (kind, ref_id)
+            ).fetchone():
+                return "blupal"
             if conn.execute(
                 "SELECT 1 FROM noapay_invoices WHERE kind=? AND ref_id=? LIMIT 1", (kind, ref_id)
             ).fetchone():

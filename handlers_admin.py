@@ -36,6 +36,7 @@ from backup import (
 )
 import crypto_payment
 import abangateway_payment
+import blupal_payment
 import noapay_payment
 import ai_support
 from panel_providers import (
@@ -59,6 +60,7 @@ from states import (
     AdminSetCard,
     AdminSetPlisio,
     AdminSetAbanGateway,
+    AdminSetBlupal,
     AdminSetNoapay,
     AdminC2CCard,
     AdminC2CSettings,
@@ -2087,6 +2089,182 @@ def create_admin_router(db, is_main_bot: bool = True, bot_manager=None) -> Route
             "برای غیرفعال‌کردن، دوباره وارد همین بخش شو و «حذف» را بفرست.",
             reply_markup=kb.admin_panel_kb(db, is_main_bot),
         )
+
+    # -------------------------------------------------------------------
+    # پرداخت‌های بلوپال (تایید خودکار کارت‌به‌کارت)
+    # -------------------------------------------------------------------
+
+    @router.callback_query(F.data == "adm_blupal_payments")
+    async def cb_admin_blupal_payments(call: CallbackQuery):
+        if not admin_only(call.from_user.id):
+            return await call.answer()
+        (await asyncio.to_thread(db.expire_stale_blupal_invoices))
+        (await asyncio.to_thread(db.purge_old_blupal_invoices, days=7))
+        invoices = (await asyncio.to_thread(db.get_blupal_invoices, 50))
+        if not invoices:
+            await call.answer("هیچ پرداخت بلوپالی ثبت نشده است.", show_alert=True)
+            return
+        await replace_admin_view(
+            call,
+            "💳 پرداخت‌های بلوپال\n\nاین پرداخت‌ها به‌صورت خودکار تایید می‌شوند و در بخش سفارش‌ها/شارژهای دستی نمایش داده نمی‌شوند.",
+            reply_markup=kb.blupal_invoices_kb(invoices),
+        )
+        await call.answer()
+
+    @router.callback_query(F.data.startswith("view_blupal_invoice:"))
+    async def cb_view_blupal_invoice(call: CallbackQuery):
+        if not admin_only(call.from_user.id):
+            return await call.answer()
+        invoice_id = callback_id(call.data, "view_blupal_invoice")
+        if invoice_id is None:
+            await call.answer("❌ درخواست نامعتبر است.", show_alert=True)
+            return
+        invoice = (await asyncio.to_thread(db.get_blupal_invoice, invoice_id))
+        if not invoice:
+            await call.answer("فاکتور یافت نشد.", show_alert=True)
+            return
+
+        status_text = {
+            "new": "🟡 جدید",
+            "pending": "🟠 در انتظار پرداخت",
+            "completed": "🟢 تکمیل‌شده",
+            "expired": "🔴 منقضی‌شده",
+            "cancelled": "⚪️ لغوشده",
+            "error": "🔴 خطا",
+        }.get(invoice["status"], invoice["status"] or "---")
+        kind_text = {"order": "🧾 سفارش", "wallet_topup": "👛 شارژ کیف پول"}.get(invoice["kind"], invoice["kind"])
+
+        text = (
+            f"💳 فاکتور بلوپال #{invoice['id']}\n"
+            f"{kind_text}: #{invoice['ref_id']}\n"
+            f"👤 کاربر: {invoice['user_id']}\n"
+            f"💰 مبلغ: {invoice['amount_toman']:,} تومان\n"
+            f"📌 وضعیت: {status_text}\n"
+            f"🕐 ایجاد: {invoice['created_at'] or '---'}"
+        )
+        rows = []
+        if invoice["payment_url"] and invoice["status"] in ("new", "pending"):
+            rows.append([InlineKeyboardButton(text="🔗 باز کردن فاکتور", url=invoice["payment_url"])])
+        if invoice["status"] in ("new", "pending"):
+            rows.append([InlineKeyboardButton(text="🔄 بررسی وضعیت", callback_data=f"check_blupal_invoice:{invoice['id']}")])
+            rows.append([InlineKeyboardButton(text="❌ لغو و حذف فاکتور", callback_data=f"cancel_blupal_invoice:{invoice['id']}")])
+        rows.append([InlineKeyboardButton(text="⬅️ بازگشت به پرداخت‌های بلوپال", callback_data="adm_blupal_payments")])
+        await replace_admin_view(call, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+        await call.answer()
+
+    @router.callback_query(F.data.startswith("check_blupal_invoice:"))
+    async def cb_check_blupal_invoice(call: CallbackQuery, bot: Bot):
+        if not admin_only(call.from_user.id):
+            return await call.answer()
+        invoice_id = callback_id(call.data, "check_blupal_invoice")
+        if invoice_id is None:
+            await call.answer("❌ درخواست نامعتبر است.", show_alert=True)
+            return
+        invoice = (await asyncio.to_thread(db.get_blupal_invoice, invoice_id))
+        if not invoice:
+            await call.answer("فاکتور یافت نشد.", show_alert=True)
+            return
+        await call.answer("در حال بررسی...")
+        result = await blupal_payment.try_verify_and_finalize(db, invoice)
+        if result == "verified_now":
+            if invoice["kind"] == "wallet_topup":
+                text = await blupal_payment.finalize_paid_topup(db, invoice["ref_id"])
+            else:
+                text = await blupal_payment.finalize_paid_order(db, bot, invoice["ref_id"])
+            await call.message.answer(text)
+        elif result == "not_paid_yet":
+            await call.message.answer("⏳ هنوز واریزی برای این فاکتور تایید نشده.")
+        elif result == "already_delivered":
+            await call.message.answer("✅ این پرداخت قبلاً تایید و تحویل داده شده است.")
+        elif result in ("expired", "cancelled"):
+            await call.message.answer("❌ اعتبار این فاکتور تمام شده یا لغو شده است.")
+        elif result.startswith("error:"):
+            await call.message.answer(f"⚠️ خطا در بررسی وضعیت: {result[6:]}")
+
+    @router.callback_query(F.data.startswith("cancel_blupal_invoice:"))
+    async def cb_cancel_blupal_invoice(call: CallbackQuery):
+        if not admin_only(call.from_user.id):
+            return await call.answer()
+        invoice_id = callback_id(call.data, "cancel_blupal_invoice")
+        if invoice_id is None:
+            await call.answer("❌ درخواست نامعتبر است.", show_alert=True)
+            return
+        invoice = (await asyncio.to_thread(db.get_blupal_invoice, invoice_id))
+        if not invoice:
+            await call.answer("فاکتور یافت نشد یا قبلاً حذف شده.", show_alert=True)
+        else:
+            (await asyncio.to_thread(db.cancel_and_delete_blupal_invoice, invoice_id))
+            await call.answer("✅ فاکتور لغو و حذف شد.")
+
+        (await asyncio.to_thread(db.expire_stale_blupal_invoices))
+        (await asyncio.to_thread(db.purge_old_blupal_invoices, days=7))
+        invoices = (await asyncio.to_thread(db.get_blupal_invoices, 50))
+        if not invoices:
+            await replace_admin_view(call, "💳 پرداخت‌های بلوپال\n\nهیچ پرداخت بلوپالی ثبت نشده است.",
+                                      reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                                          [InlineKeyboardButton(text="⬅️ بازگشت", callback_data="adm_cat:daily")]
+                                      ]))
+            return
+        await replace_admin_view(
+            call,
+            "💳 پرداخت‌های بلوپال\n\nاین پرداخت‌ها به‌صورت خودکار تایید می‌شوند و در بخش سفارش‌ها/شارژهای دستی نمایش داده نمی‌شوند.",
+            reply_markup=kb.blupal_invoices_kb(invoices),
+        )
+
+    # -------------------------------------------------------------------
+    # تنظیم درگاه پرداخت بلوپال
+    # -------------------------------------------------------------------
+
+    @router.callback_query(F.data == "adm_set_blupal")
+    async def cb_admin_set_blupal(call: CallbackQuery, state: FSMContext):
+        if not full_admin_only(call.from_user.id):
+            return await deny_support(call)
+        current = (await asyncio.to_thread(db.get_setting, "blupal_api_key", ""))
+        masked = f"...{current[-4:]}" if current else "❌ تنظیم نشده"
+        source = blupal_payment.resolve_api_key_source(db)
+        source_note = {
+            "db": "✅ از همین پنل بات خوانده می‌شود (بات و مینی‌اپ هر دو همین را می‌بینند، بدون نیاز به ری‌استارت).",
+            "env": "⚠️ فقط از فایل .env این پروسه خوانده می‌شود. اگر بات و مینی‌اپ را جدا ری‌استارت نکرده باشی ممکن است این دو با هم ناهماهنگ باشند. پیشنهاد: همینجا دوباره ثبتش کن تا مطمئن بشی.",
+            "none": "❌ هیچ کلیدی (نه در دیتابیس، نه در .env) تنظیم نشده.",
+        }[source]
+        tenant_id = (await asyncio.to_thread(db.get_setting, "miniapp_tenant_id", ""))
+        webhook_hint = blupal_payment.webhook_url_hint(tenant_id)
+        webhook_note = (
+            f"\n\n🔗 پس از تنظیم کلید، این آدرس را در داشبورد بلوپال (تنظیمات API Key → Webhook URL) وارد کن تا تاییدها آنی شوند:\n{webhook_hint}"
+            if webhook_hint else
+            "\n\n⚠️ آدرس مینی‌اپ (MINIAPP_URL) روی سرور تنظیم نشده؛ بدون آن نمی‌توانی آدرس وب‌هوک بسازی (بررسی دستی وضعیت هنوز کار می‌کند)."
+        )
+        await state.set_state(AdminSetBlupal.waiting_key)
+        await safe_edit(
+            call,
+            f"💳 API Key حساب بلوپال را ارسال کن (از blupal.net → مدیریت API Key).\n"
+            f"وضعیت فعلی: {masked}\n"
+            f"منبع کلید: {source_note}"
+            f"{webhook_note}\n\n"
+            f"برای غیرفعال‌کردن، عبارت «حذف» را بفرست.",
+            reply_markup=kb.admin_back_kb(),
+        )
+        await call.answer()
+
+    @router.message(AdminSetBlupal.waiting_key)
+    async def process_set_blupal_key(message: Message, state: FSMContext):
+        text = message.text.strip()
+        await state.clear()
+        if text in ("حذف", "/حذف", "-"):
+            (await asyncio.to_thread(db.set_setting, "blupal_api_key", ""))
+            (await asyncio.to_thread(db.log_admin_action, message.from_user.id, "blupal_key_change", "API Key بلوپال حذف شد."))
+            await message.answer("✅ API Key بلوپال حذف شد و درگاه غیرفعال شد.", reply_markup=kb.admin_panel_kb(db, is_main_bot))
+            return
+        (await asyncio.to_thread(db.set_setting, "blupal_api_key", text))
+        (await asyncio.to_thread(db.set_setting, "blupal_payment_enabled", "1"))
+        (await asyncio.to_thread(db.log_admin_action, message.from_user.id, "blupal_key_change", "API Key بلوپال تغییر کرد."))
+        await message.answer(
+            "✅ API Key بلوپال ذخیره شد و درگاه فعال شد.\n"
+            "یادت نره آدرس وب‌هوک را هم در داشبورد بلوپال ثبت کنی (در همین صفحه نمایش داده شد).\n"
+            "برای غیرفعال‌کردن، دوباره وارد همین بخش شو و «حذف» را بفرست.",
+            reply_markup=kb.admin_panel_kb(db, is_main_bot),
+        )
+
 
     # -------------------------------------------------------------------
     # کارت‌به‌کارت با تایید خودکار (پیامک بانک) — همان چیزی که در پنل وب

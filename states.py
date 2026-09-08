@@ -127,6 +127,9 @@ class AdminSetAbanGateway(StatesGroup):
     waiting_key = State()
 
 
+class AdminSetBlupal(StatesGroup):
+    waiting_key = State()
+
 
 class AdminSetNoapay(StatesGroup):
     waiting_key = State()
