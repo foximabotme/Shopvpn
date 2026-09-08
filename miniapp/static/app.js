@@ -4635,6 +4635,7 @@ const ADMIN_ACTION_LABELS = {
   card_change: "💳 تغییر شماره کارت",
   plisio_key_change: "🪙 تغییر کلید کریپتو (Plisio)",
   abangateway_key_change: "💳 تغییر کلید آبان گیت‌وی",
+  blupal_key_change: "💳 تغییر کلید بلوپال",
   noapay_key_change: "⭐ تغییر تنظیمات NoapayBot",
   noapay_toggle: "⭐ تغییر وضعیت NoapayBot",
   backup_create: "🗄 دریافت بکاپ",
@@ -5263,10 +5264,11 @@ async function renderAdminFinanceSection() {
   const body = document.getElementById("admin-section-body");
   body.innerHTML = skeleton(3);
   try {
-    const [card, crypto, aban, noapay] = await Promise.all([
+    const [card, crypto, aban, blupal, noapay] = await Promise.all([
       api("/api/admin/settings/card"),
       api("/api/admin/settings/crypto"),
       api("/api/admin/settings/abangateway"),
+      api("/api/admin/settings/blupal"),
       api("/api/admin/settings/noapay"),
     ]);
 
@@ -5332,6 +5334,25 @@ async function renderAdminFinanceSection() {
         <div class="field-error" id="fin-aban-error"></div>
         <button class="btn" id="fin-aban-save" style="margin-top:8px">💾 ذخیره</button>
         ${aban.has_own_key ? `<button class="btn outline danger" id="fin-aban-clear" style="margin-top:8px">🗑 حذف کلید و غیرفعال‌سازی</button>` : ""}
+      </div>
+
+      <div class="card">
+        <div class="eyebrow" style="margin-top:0">💳 بلوپال (کارت به کارت خودکار)</div>
+        <p class="hint-text">با فعال شدن، پرداخت کارت به کارت به‌صورت خودکار از طریق بلوپال تایید می‌شه، بدون نیاز به بررسی دستی رسید.</p>
+        <label class="field-label">API Key (از blupal.net → مدیریت API Key)</label>
+        <input class="input" id="fin-blupal-key" type="password" placeholder="${blupal.has_own_key ? blupal.masked_key || "•••• تنظیم شده" : "کلید را وارد کن"}" style="direction:ltr;text-align:left;margin-bottom:4px" />
+        <p class="hint-text" style="margin-bottom:10px">برای تغییر کلید، کلید جدید را وارد و ذخیره کن. کادر را خالی بگذاری، کلید فعلی دست‌نخورده می‌ماند.</p>
+        <div class="field-switch-row">
+          <span>بلوپال فعال باشد</span>
+          <label class="switch"><input type="checkbox" id="fin-blupal-enabled" ${blupal.enabled ? "checked" : ""} /><span class="switch-slider"></span></label>
+        </div>
+        ${blupal.webhook_url ? `
+        <label class="field-label">آدرس وب‌هوک (این را در داشبورد بلوپال → تنظیمات همین API Key → Webhook URL وارد کن تا تاییدها آنی شوند)</label>
+        <input class="input" type="text" readonly value="${blupal.webhook_url.replace(/"/g, "&quot;")}" style="direction:ltr;text-align:left;margin-bottom:10px;opacity:0.85" onclick="this.select()" />
+        ` : `<p class="hint-text" style="margin-bottom:10px">⚠️ برای ساخت آدرس وب‌هوک، MINIAPP_URL روی سرور تنظیم نشده؛ بررسی دستی وضعیت هنوز از داخل بات کار می‌کند.</p>`}
+        <div class="field-error" id="fin-blupal-error"></div>
+        <button class="btn" id="fin-blupal-save" style="margin-top:8px">💾 ذخیره</button>
+        ${blupal.has_own_key ? `<button class="btn outline danger" id="fin-blupal-clear" style="margin-top:8px">🗑 حذف کلید و غیرفعال‌سازی</button>` : ""}
       </div>
 
       <div class="card">
@@ -5501,6 +5522,40 @@ async function renderAdminFinanceSection() {
           });
           tg.HapticFeedback.notificationOccurred("success");
           notify("کلید آبان گیت‌وی حذف شد.");
+          renderAdminFinanceSection();
+        } catch (e) { notify(e.message); }
+      };
+    }
+
+    document.getElementById("fin-blupal-save").onclick = async () => {
+      const errBox = document.getElementById("fin-blupal-error");
+      errBox.textContent = "";
+      const keyInput = document.getElementById("fin-blupal-key").value;
+      try {
+        await api("/api/admin/settings/blupal", {
+          method: "POST",
+          body: JSON.stringify({
+            enabled: document.getElementById("fin-blupal-enabled").checked,
+            api_key: keyInput === "" ? null : keyInput,
+          }),
+        });
+        tg.HapticFeedback.notificationOccurred("success");
+        notify("تنظیمات بلوپال ذخیره شد.");
+        renderAdminFinanceSection();
+      } catch (e) { errBox.textContent = e.message; }
+    };
+
+    const blupalClearBtn = document.getElementById("fin-blupal-clear");
+    if (blupalClearBtn) {
+      blupalClearBtn.onclick = async () => {
+        if (!confirm("کلید API بلوپال حذف و درگاه غیرفعال شود؟")) return;
+        try {
+          await api("/api/admin/settings/blupal", {
+            method: "POST",
+            body: JSON.stringify({ enabled: false, api_key: "" }),
+          });
+          tg.HapticFeedback.notificationOccurred("success");
+          notify("کلید بلوپال حذف شد.");
           renderAdminFinanceSection();
         } catch (e) { notify(e.message); }
       };
