@@ -299,8 +299,15 @@ class ThreeXUIProvider(BasePanelProvider):
     async def _post_client_update(self, session: aiohttp.ClientSession, url_client_id: str,
                                    inbound_id, updated_client: dict, action_label: str) -> dict:
         """یک درخواست update به ازای یک (client, inbound) می‌فرستد؛ برای
-        استفاده‌ی مشترک در حلقه‌ی روی چند inbound."""
-        payload = {"id": inbound_id, "client": updated_client}
+        استفاده‌ی مشترک در حلقه‌ی روی چند inbound.
+
+        نکته (رفع باگ): endpoint جدید /panel/api/clients/update/{email} بدنه‌ی
+        flat خودِ فیلدهای کلاینت را می‌خواهد، نه {"id": inbound_id, "client": ...}.
+        فرستادن inbound_id (عدد) داخل کلید "id" باعث خطای
+        'cannot unmarshal number into Go struct field .id of type string' می‌شد،
+        چون آن endpoint فیلد id را رشته (uuid کلاینت) فرض می‌کند. همچنین شناسه‌ی
+        داخل URL باید ایمیل (username) باشد، نه client["id"]."""
+        payload = updated_client
         try:
             async with session.post(
                 f"{self._base_url()}/panel/api/clients/update/{url_client_id}", json=payload,
@@ -337,7 +344,7 @@ class ThreeXUIProvider(BasePanelProvider):
                 updated_client["enable"] = True
 
                 await self._post_client_update(
-                    session, client["id"], inbound_id, updated_client, "بروزرسانی کاربر",
+                    session, username, inbound_id, updated_client, "بروزرسانی کاربر",
                 )
 
                 if reset_usage:
@@ -378,7 +385,7 @@ class ThreeXUIProvider(BasePanelProvider):
                 # شده UUID عوض شود، وگرنه در inbound های دیگر لینک/UUID قدیمی
                 # همچنان معتبر می‌ماند و دسترسی واقعاً قطع نمی‌شود.
                 await self._post_client_update(
-                    session, client["id"], inbound_id, updated_client, "قطع دسترسی/تولید لینک جدید",
+                    session, username, inbound_id, updated_client, "قطع دسترسی/تولید لینک جدید",
                 )
 
         sub_url = f"{sub_base_url.rstrip('/')}/{new_sub_id}" if sub_base_url else ""
@@ -391,7 +398,7 @@ class ThreeXUIProvider(BasePanelProvider):
                 updated_client = dict(client)
                 updated_client["enable"] = bool(enabled)
                 await self._post_client_update(
-                    session, client["id"], inbound_id, updated_client, "تغییر وضعیت کاربر",
+                    session, username, inbound_id, updated_client, "تغییر وضعیت کاربر",
                 )
 
     async def rename_user(self, username: str, new_username: str) -> None:
@@ -405,7 +412,7 @@ class ThreeXUIProvider(BasePanelProvider):
                 updated_client = dict(client)
                 updated_client["email"] = new_username
                 await self._post_client_update(
-                    session, client["id"], inbound_id, updated_client, "تغییر نام کاربر",
+                    session, username, inbound_id, updated_client, "تغییر نام کاربر",
                 )
 
     async def test_connection(self) -> bool:
