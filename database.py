@@ -1866,6 +1866,16 @@ class Database:
                 )
             return cur.rowcount > 0
 
+    def delete_mobile_token(self, token_id: int, admin_id: int = None) -> bool:
+        with self._get_conn() as conn:
+            if admin_id is not None:
+                cur = conn.execute(
+                    "DELETE FROM mobile_app_tokens WHERE id=? AND admin_id=?", (token_id, admin_id)
+                )
+            else:
+                cur = conn.execute("DELETE FROM mobile_app_tokens WHERE id=?", (token_id,))
+            return cur.rowcount > 0
+
     # --------------------- اپ موبایل: توکن دستگاه برای Push (FCM) ---------------------
 
     def save_fcm_token(self, admin_id: int, mobile_token_id: int, fcm_token: str, device_label: str = ""):
