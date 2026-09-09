@@ -555,7 +555,12 @@ function showApp() {
   let saved = null;
   try { saved = localStorage.getItem('admin_current_tab'); } catch (e) {}
   const savedValid = saved && NAV.find(n => n.key === saved && canSee(n.role));
-  goTo(savedValid ? saved : 'dashboard');
+  // اپ اندروید (وب‌ویو) برای دیپ‌لینک به یک تب مشخص از ?tab=xxx استفاده می‌کند —
+  // این همیشه روی مقدار ذخیره‌شده در localStorage اولویت دارد.
+  let queryTab = null;
+  try { queryTab = new URLSearchParams(location.search).get('tab'); } catch (e) {}
+  const queryValid = queryTab && NAV.find(n => n.key === queryTab && canSee(n.role));
+  goTo(queryValid ? queryTab : (savedValid ? saved : 'dashboard'));
 }
 
 /* ==================================================== web push (level 2) ===
@@ -5157,8 +5162,8 @@ function switchSettingsTab(tab, root) {
 // توکن‌های دسترسی طولانی‌مدت (PAT) برای اپ اندروید مدیریت؛ خود اپ هم از
 // داخل «تنظیمات» می‌تواند توکن جدید بسازد، این بخش فقط برای اولین اتصال
 // و مدیریت/باطل‌کردن توکن‌ها از روی مرورگر است.
-function mobileTokenRowsHtml(tokens) {
-  return (tokens || []).map(t => `
+function mobileAppCardHtml(tokens) {
+  const rows = (tokens || []).map(t => `
     <div class="list-row" data-token-row="${t.id}">
       <div>
         <div>${esc(t.name)}${t.revoked_at ? ' <span class="badge badge-muted">باطل‌شده</span>' : ''}</div>
@@ -5166,9 +5171,7 @@ function mobileTokenRowsHtml(tokens) {
       </div>
       ${!t.revoked_at ? `<button class="btn btn-danger btn-sm" data-revoke-token="${t.id}">باطل کردن</button>` : ''}
     </div>`).join('') || `<div class="empty-state">هنوز توکنی نساخته‌ای.</div>`;
-}
 
-function mobileAppCardHtml(tokens) {
   return `
   <div class="card">
     <h3>اپ موبایل مدیریت</h3>
@@ -5181,35 +5184,11 @@ function mobileAppCardHtml(tokens) {
       <button class="btn btn-primary" id="create-mobile-token-btn">ساخت توکن</button>
     </div>
     <div id="new-mobile-token-box"></div>
-    <div class="list" id="mobile-token-list" style="margin-top:8px">${mobileTokenRowsHtml(tokens)}</div>
+    <div class="list" style="margin-top:8px">${rows}</div>
   </div>`;
 }
 
 function bindMobileAppEvents(root, refresh) {
-  // این تابع فقط لیست توکن‌ها را دوباره می‌گیرد و ردیف‌ها را بازسازی می‌کند —
-  // برخلاف renderSettings کامل، باکس نمایش توکن تازه‌ساخته‌شده را پاک نمی‌کند.
-  async function refreshTokenList() {
-    let tokens = [];
-    try { tokens = await apiGet('/app/tokens'); } catch (e) { /* لیست به‌روزرسانی نشد، مهم نیست */ }
-    const list = $('#mobile-token-list', root);
-    if (!list) return;
-    list.innerHTML = mobileTokenRowsHtml(tokens);
-    bindRevokeButtons();
-  }
-
-  function bindRevokeButtons() {
-    $$('[data-revoke-token]', root).forEach(btn => btn.addEventListener('click', async () => {
-      if (!confirm('این توکن باطل شود؟ دستگاهی که با آن وصل شده دیگر دسترسی نخواهد داشت.')) return;
-      try {
-        await apiDelete(`/app/tokens/${btn.dataset.revokeToken}`);
-        toast('توکن باطل شد.');
-        refreshTokenList();
-      } catch (e) {
-        handleErr(e);
-      }
-    }));
-  }
-
   const createBtn = $('#create-mobile-token-btn', root);
   if (createBtn) createBtn.addEventListener('click', async () => {
     const nameInput = $('#new-mobile-token-name', root);
@@ -5232,12 +5211,8 @@ function bindMobileAppEvents(root, refresh) {
           navigator.clipboard?.writeText(res.token).then(() => toast('کپی شد.'));
         });
       }
-      if (nameInput) nameInput.value = '';
       toast('توکن ساخته شد.');
-      // فقط لیست ردیف‌ها را رفرش کن، نه کل صفحه‌ی تنظیمات — وگرنه باکس بالا
-      // (که تنها جای نمایش توکن خام است) بلافاصله پاک می‌شود و توکن برای
-      // همیشه از دست می‌رود چون سمت سرور ذخیره نشده.
-      refreshTokenList();
+      refresh();
     } catch (e) {
       handleErr(e);
     } finally {
@@ -5245,7 +5220,16 @@ function bindMobileAppEvents(root, refresh) {
     }
   });
 
-  bindRevokeButtons();
+  $$('[data-revoke-token]', root).forEach(btn => btn.addEventListener('click', async () => {
+    if (!confirm('این توکن باطل شود؟ دستگاهی که با آن وصل شده دیگر دسترسی نخواهد داشت.')) return;
+    try {
+      await apiDelete(`/app/tokens/${btn.dataset.revokeToken}`);
+      toast('توکن باطل شد.');
+      refresh();
+    } catch (e) {
+      handleErr(e);
+    }
+  }));
 }
 
 
