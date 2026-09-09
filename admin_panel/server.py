@@ -640,11 +640,15 @@ async def api_app_list_tokens(admin=Depends(get_current_admin)):
 
 @app.delete("/api/app/tokens/{token_id}")
 async def api_app_revoke_token(token_id: int, admin=Depends(get_current_admin)):
+    """اگر توکن هنوز فعال است باطلش می‌کند؛ اگر قبلاً باطل شده، برای همیشه از لیست حذف می‌کند."""
     tenant = _current_tenant.get()
     ok = await asyncio.to_thread(tenant.db.revoke_mobile_token, token_id, admin["id"])
+    if ok:
+        return {"ok": True, "deleted": False}
+    ok = await asyncio.to_thread(tenant.db.delete_mobile_token, token_id, admin["id"])
     if not ok:
-        raise HTTPException(404, "توکن پیدا نشد یا قبلاً باطل شده است.")
-    return {"ok": True}
+        raise HTTPException(404, "توکن پیدا نشد.")
+    return {"ok": True, "deleted": True}
 
 
 class FcmTokenBody(BaseModel):
