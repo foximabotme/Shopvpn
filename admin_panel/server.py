@@ -707,9 +707,12 @@ def api_app_config(admin=Depends(get_current_admin)):
             "source": "/api/dashboard",
         }
     ]
+
+    # ------------------------------------------------------------ عملیات مالی
     if allowed("orders"):
         tabs.append({
             "id": "orders", "title": "سفارش‌ها", "icon": "receipt", "screen": "list",
+            "section": "عملیات مالی",
             "source": "/api/orders", "item_id_field": "id",
             "search": True,
             "filters": [{"key": "status", "label": "وضعیت", "options":
@@ -731,6 +734,7 @@ def api_app_config(admin=Depends(get_current_admin)):
         # شارژ کیف‌پول هم زیر همان مجوز "orders" است (طبق تعریف WEB_ADMIN_PERMISSIONS)
         tabs.append({
             "id": "topups", "title": "شارژ کیف‌پول", "icon": "wallet", "screen": "list",
+            "section": "عملیات مالی",
             "source": "/api/topups", "item_id_field": "id",
             "fields": [
                 {"key": "id", "label": "#", "type": "text"},
@@ -745,9 +749,12 @@ def api_app_config(admin=Depends(get_current_admin)):
                  "endpoint": "/api/topups/{id}/reject", "style": "danger", "confirm": True},
             ],
         })
+
+    # ------------------------------------------------------- کاربران و پشتیبانی
     if allowed("users"):
         tabs.append({
             "id": "users", "title": "کاربران", "icon": "people", "screen": "list",
+            "section": "کاربران و پشتیبانی",
             "source": "/api/users", "item_id_field": "tg_id", "search": True,
             "fields": [
                 {"key": "tg_id", "label": "شناسه", "type": "text"},
@@ -762,9 +769,31 @@ def api_app_config(admin=Depends(get_current_admin)):
                  "endpoint": "/api/users/{tg_id}/unblock", "style": "success", "confirm": True},
             ],
         })
+    # تیکت‌ها مثل خودِ نوار پنل وب مجوز خاصی نمی‌خواهد؛ هر ادمین لاگین‌کرده می‌بیند
+    tabs.append({
+        "id": "tickets", "title": "تیکت‌ها", "icon": "ticket", "screen": "list",
+        "section": "کاربران و پشتیبانی",
+        "source": "/api/tickets", "item_id_field": "id", "search": True,
+        "filters": [{"key": "status", "label": "وضعیت", "options": ["open", "answered", "closed"]}],
+        "fields": [
+            {"key": "id", "label": "#", "type": "text"},
+            {"key": "subject", "label": "موضوع", "type": "title"},
+            {"key": "status", "label": "وضعیت", "type": "badge"},
+            {"key": "updated_at", "label": "آخرین بروزرسانی", "type": "date"},
+        ],
+    })
+    # چت زنده هم مثل تب خودش در پنل وب برای هر ادمینی باز است؛ چون ماهیتش
+    # زنده/رفت‌وبرگشتی است همان صفحه‌ی وب را در یک وب‌ویوی داخل اپ نشان می‌دهیم
+    tabs.append({
+        "id": "support", "title": "چت زنده", "icon": "chat", "screen": "webview",
+        "section": "کاربران و پشتیبانی", "url": "/?tab=support",
+    })
+
+    # ------------------------------------------------------- محصولات و بازاریابی
     if allowed("catalog"):
         tabs.append({
             "id": "products", "title": "محصولات", "icon": "box", "screen": "list",
+            "section": "محصولات و بازاریابی",
             "source": "/api/products", "item_id_field": "id",
             "fields": [
                 {"key": "name", "label": "نام", "type": "title"},
@@ -773,9 +802,125 @@ def api_app_config(admin=Depends(get_current_admin)):
                  "toggle_endpoint": "/api/products/{id}/toggle"},
             ],
         })
-    tabs.append({"id": "map", "title": "نقشه سرورها (نمای وب)", "screen": "webview",
-                 "icon": "map", "url": "/"})
-    tabs.append({"id": "settings", "title": "تنظیمات", "icon": "settings", "screen": "settings"})
+    if allowed("discounts"):
+        tabs.append({
+            "id": "discounts", "title": "کدهای تخفیف", "icon": "discount", "screen": "list",
+            "section": "محصولات و بازاریابی",
+            "source": "/api/discounts", "item_id_field": "id",
+            "fields": [
+                {"key": "code", "label": "کد", "type": "title"},
+                {"key": "percent", "label": "درصد", "type": "text"},
+                {"key": "used_count", "label": "استفاده‌شده", "type": "text"},
+                {"key": "is_active", "label": "فعال", "type": "toggle",
+                 "toggle_endpoint": "/api/discounts/{id}/toggle"},
+            ],
+            "actions": [
+                {"id": "delete", "label": "حذف", "method": "DELETE",
+                 "endpoint": "/api/discounts/{id}", "style": "danger", "confirm": True},
+            ],
+        })
+    if allowed("broadcast"):
+        # فرم پیام همگانی (انتخاب مخاطب، ضمیمه و ...) در پنل وب پیاده شده؛
+        # چون ذاتاً یک فرم غنی است همان صفحه را این‌جا هم نشان می‌دهیم
+        tabs.append({
+            "id": "broadcast", "title": "پیام همگانی", "icon": "campaign", "screen": "webview",
+            "section": "محصولات و بازاریابی", "url": "/?tab=broadcast",
+        })
+    if allowed("settings"):
+        # آپلود تصویر بنر (multipart) در فرم وب پیاده شده؛ همان‌جا نگه می‌داریم
+        tabs.append({
+            "id": "banners", "title": "بنرها", "icon": "image", "screen": "webview",
+            "section": "محصولات و بازاریابی", "url": "/?tab=banners",
+        })
+
+    # ------------------------------------------------------------ شبکه و همکاران
+    if allowed("resellers"):
+        tabs.append({
+            "id": "resellers", "title": "نمایندگی‌ها", "icon": "groups", "screen": "list",
+            "section": "شبکه و همکاران",
+            "source": "/api/resellers", "item_id_field": "telegram_id", "search": True,
+            "fields": [
+                {"key": "telegram_id", "label": "شناسه", "type": "text"},
+                {"key": "full_name", "label": "نام", "type": "title"},
+                {"key": "reseller_credit_gb", "label": "اعتبار (گیگ)", "type": "text"},
+                {"key": "sold_configs", "label": "فروش", "type": "text"},
+            ],
+        })
+    if allowed("panels"):
+        tabs.append({
+            "id": "panels", "title": "پنل‌های VPN", "icon": "dns", "screen": "list",
+            "section": "شبکه و همکاران",
+            "source": "/api/panel-servers", "item_id_field": "id",
+            "fields": [
+                {"key": "name", "label": "نام", "type": "title"},
+                {"key": "type_label", "label": "نوع", "type": "badge"},
+                {"key": "is_active", "label": "فعال", "type": "toggle",
+                 "toggle_endpoint": "/api/panel-servers/{id}/toggle"},
+            ],
+        })
+    tabs.append({
+        "id": "map", "title": "نقشه سرورها", "icon": "map", "screen": "webview",
+        "section": "شبکه و همکاران", "url": "/?tab=dashboard",
+    })
+
+    # -------------------------------------------------------------- تنظیمات و سیستم
+    if allowed("settings"):
+        tabs.append({
+            "id": "branding", "title": "تنظیمات و برندینگ", "icon": "brush", "screen": "webview",
+            "section": "تنظیمات و سیستم", "url": "/?tab=settings",
+        })
+        tabs.append({
+            "id": "buttons", "title": "دکمه‌های ربات", "icon": "tune", "screen": "webview",
+            "section": "تنظیمات و سیستم", "url": "/?tab=buttons",
+        })
+        tabs.append({
+            "id": "salessettings", "title": "تنظیمات فروش", "icon": "sell", "screen": "webview",
+            "section": "تنظیمات و سیستم", "url": "/?tab=salessettings",
+        })
+    if is_owner:
+        tabs.append({
+            "id": "webadmins", "title": "کاربران پنل", "icon": "admin", "screen": "list",
+            "section": "تنظیمات و سیستم",
+            "source": "/api/web-admins", "item_id_field": "id",
+            "fields": [
+                {"key": "username", "label": "نام کاربری", "type": "title"},
+                {"key": "role", "label": "نقش", "type": "badge"},
+            ],
+        })
+        tabs.append({
+            "id": "tgadmins", "title": "ادمین‌های ربات", "icon": "shield", "screen": "list",
+            "section": "تنظیمات و سیستم",
+            "source": "/api/telegram-admins", "item_id_field": "telegram_id",
+            "fields": [
+                {"key": "telegram_id", "label": "شناسه", "type": "title"},
+                {"key": "role", "label": "نقش", "type": "badge"},
+            ],
+        })
+    if allowed("system"):
+        tabs.append({
+            "id": "system", "title": "سیستم و نگهداری", "icon": "memory", "screen": "webview",
+            "section": "تنظیمات و سیستم", "url": "/?tab=system",
+        })
+        tabs.append({
+            "id": "logs", "title": "لاگ فعالیت ادمین‌ها", "icon": "history", "screen": "list",
+            "section": "تنظیمات و سیستم",
+            "source": "/api/admin-logs", "item_id_field": "id",
+            "fields": [
+                {"key": "action", "label": "عملیات", "type": "title"},
+                {"key": "record_type", "label": "نوع", "type": "badge"},
+                {"key": "created_at", "label": "تاریخ", "type": "date"},
+            ],
+        })
+
+    # ------------------------------------------------------------------ حساب کاربری
+    tabs.append({
+        "id": "account", "title": "حساب من", "icon": "account", "screen": "webview",
+        "section": "حساب کاربری", "url": "/?tab=account",
+    })
+    tabs.append({
+        "id": "device_settings", "title": "تنظیمات دستگاه", "icon": "settings", "screen": "settings",
+        "section": "حساب کاربری",
+    })
 
     return {
         "app_min_supported_version": 1,
