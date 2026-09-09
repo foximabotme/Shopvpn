@@ -24,7 +24,7 @@ from datetime import datetime
 from typing import Optional, List
 
 from fastapi import FastAPI, Request, Response, Depends, HTTPException, UploadFile, File, Form
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 
@@ -43,9 +43,11 @@ from config import DB_PATH, BOT_TOKEN, OWNER_ID, ADMIN_PANEL_SECRET, VAPID_PUBLI
 from database import Database, WEB_ADMIN_PERMISSIONS, MENU_BUTTON_META
 import button_registry
 from admin_panel.security import hash_password, verify_password, create_session_token, verify_session_token
+from admin_panel import mobile_auth
 from admin_panel.telegram_notify import send_message as tg_send, send_document as tg_send_document, fetch_telegram_file
 from admin_panel.config_delivery_web import deliver_config_to_user_web
 from admin_panel.webpush import PUSH_ENABLED, send_push
+import fcm_client
 from reseller_auto_provision import provision_auto_config, ProvisionError
 from direct_panel_provision import provision_direct, ProvisionError as DirectProvisionError
 from stock_alerts import check_and_notify_low_stock
@@ -158,15 +160,26 @@ def resolve_tenant_by_slug(slug: str) -> Optional[Tenant]:
 
 async def _notify_admins(permission: str, payload: dict):
     subs = (await asyncio.to_thread(db.list_push_subscriptions_for_permission, permission))
-    if not subs:
-        return
-    gone = []
-    for s in subs:
-        result = await send_push(s, payload)
-        if result == "gone":
-            gone.append(s["endpoint"])
-    if gone:
-        (await asyncio.to_thread(db.delete_push_subscriptions_by_endpoints, gone))
+    if subs:
+        gone = []
+        for s in subs:
+            result = await send_push(s, payload)
+            if result == "gone":
+                gone.append(s["endpoint"])
+        if gone:
+            (await asyncio.to_thread(db.delete_push_subscriptions_by_endpoints, gone))
+
+    # پوش اپ موبایل (FCM) — مستقل از وب‌پوش؛ اگر Firebase تنظیم نشده باشد
+    # (FCM_ENABLED=False) این بخش عملاً کاری نمی‌کند.
+    if fcm_client.FCM_ENABLED:
+        fcm_tokens = (await asyncio.to_thread(db.list_fcm_tokens))
+        if fcm_tokens:
+            invalid = await fcm_client.send_to_tokens(
+                fcm_tokens, payload.get("title", "ShopVPN"), payload.get("body", ""),
+                data={"tag": payload.get("tag", "")},
+            )
+            for t in invalid:
+                await asyncio.to_thread(db.delete_fcm_token, t)
 
 
 async def _notifier_loop():
@@ -407,7 +420,42 @@ class LoginBody(BaseModel):
     b: Optional[str] = None  # اسلاگ نماینده؛ خالی/غایب یعنی بات اصلی
 
 
+async def _authenticate_via_mobile_token(bearer_token: str):
+    """اعتبارسنجی توکن دسترسی طولانی‌مدت اپ موبایل (Authorization: Bearer ...).
+    برمی‌گرداند: dict ادمین در همان قالب get_current_admin، یا None اگر معتبر نبود."""
+    tenant_slug = mobile_auth.extract_tenant_slug(bearer_token)
+    if tenant_slug is None:
+        return None
+    tenant = resolve_tenant_by_slug(tenant_slug)
+    if not tenant:
+        return None
+    token_hash = mobile_auth.hash_token(bearer_token)
+    row = await asyncio.to_thread(tenant.db.get_mobile_token_by_hash, token_hash)
+    if not row:
+        return None
+    admin = await asyncio.to_thread(tenant.db.get_web_admin, row["admin_id"])
+    if not admin or not admin["is_active"]:
+        return None
+    _current_tenant.set(tenant)
+    await asyncio.to_thread(tenant.db.touch_mobile_token, row["id"])
+    return {
+        "id": admin["id"],
+        "username": admin["username"],
+        "role": admin["role"],
+        "permissions": (await asyncio.to_thread(tenant.db.get_web_admin_permissions, admin)),
+        "tenant": tenant.slug,
+        "mobile_token_id": row["id"],
+    }
+
+
 async def get_current_admin(request: Request):
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        admin = await _authenticate_via_mobile_token(auth_header[7:].strip())
+        if admin:
+            return admin
+        raise HTTPException(401, "توکن دسترسی نامعتبر یا باطل‌شده است.")
+
     token = request.cookies.get(COOKIE_NAME)
     payload = verify_session_token(ADMIN_PANEL_SECRET, token) if token else None
     if not payload:
@@ -556,6 +604,185 @@ def api_setup_submit(body: SetupBody, response: Response):
 @app.get("/api/me")
 def api_me(admin=Depends(get_current_admin)):
     return admin
+
+
+# ============================================================================
+#  اپ موبایل مدیریت (Native Android) — توکن دسترسی، پیکربندی SDUI، Push (FCM)
+# ============================================================================
+
+class MobileTokenCreateBody(BaseModel):
+    name: str = "دستگاه من"
+
+
+@app.post("/api/app/tokens")
+async def api_app_create_token(body: MobileTokenCreateBody, admin=Depends(get_current_admin)):
+    """یک توکن دسترسی طولانی‌مدت جدید برای اپ موبایل می‌سازد.
+    رشته‌ی خام توکن فقط همین یک‌بار در پاسخ برمی‌گردد و هیچ‌جا ذخیره نمی‌شود."""
+    tenant = _current_tenant.get()
+    full_token, token_hash, prefix = mobile_auth.generate_token(tenant.slug)
+    token_id = await asyncio.to_thread(
+        tenant.db.create_mobile_token, admin["id"], body.name, token_hash, prefix
+    )
+    return {
+        "id": token_id,
+        "token": full_token,  # فقط همین یک بار نمایش داده می‌شود
+        "name": body.name,
+        "server_url": API_BASE_URL,
+    }
+
+
+@app.get("/api/app/tokens")
+async def api_app_list_tokens(admin=Depends(get_current_admin)):
+    tenant = _current_tenant.get()
+    rows = await asyncio.to_thread(tenant.db.list_mobile_tokens, admin["id"])
+    return [dict(r) for r in rows]
+
+
+@app.delete("/api/app/tokens/{token_id}")
+async def api_app_revoke_token(token_id: int, admin=Depends(get_current_admin)):
+    tenant = _current_tenant.get()
+    ok = await asyncio.to_thread(tenant.db.revoke_mobile_token, token_id, admin["id"])
+    if not ok:
+        raise HTTPException(404, "توکن پیدا نشد یا قبلاً باطل شده است.")
+    return {"ok": True}
+
+
+class FcmTokenBody(BaseModel):
+    fcm_token: str
+    device_label: str = ""
+
+
+@app.post("/api/app/fcm-token")
+async def api_app_register_fcm(body: FcmTokenBody, admin=Depends(get_current_admin)):
+    """اپ موبایل بعد از دریافت توکن Firebase، آن را اینجا ثبت می‌کند تا بات
+    بتواند برای این ادمین نوتیفیکیشن پوش (سفارش جدید، تیکت جدید و ...) بفرستد."""
+    tenant = _current_tenant.get()
+    await asyncio.to_thread(
+        tenant.db.save_fcm_token, admin["id"], admin.get("mobile_token_id"),
+        body.fcm_token, body.device_label,
+    )
+    return {"ok": True}
+
+
+@app.delete("/api/app/fcm-token")
+async def api_app_unregister_fcm(body: FcmTokenBody, admin=Depends(get_current_admin)):
+    tenant = _current_tenant.get()
+    await asyncio.to_thread(tenant.db.delete_fcm_token, body.fcm_token)
+    return {"ok": True}
+
+
+@app.get("/app/webview-bridge")
+async def app_webview_bridge(token: str, next: str = "/"):
+    """پل بین PAT اپ موبایل و پنل وب کامل (که هنوز کوکی‌محور است): توکن را مثل
+    get_current_admin معتبرسنجی می‌کند، یک کوکی سشن عادی برای همان تننت/ادمین
+    می‌سازد و کاربر را به پنل وب (SPA تک‌صفحه‌ای، پیش‌فرض داشبورد که شامل
+    نقشه‌ی سرورهاست) ریدایرکت می‌کند. توجه: پنل وب مسیر URL جدا برای هر تب
+    ندارد (فقط "/" و "/setup")، پس اینجا همیشه "/" یا "/setup" معتبر است."""
+    admin = await _authenticate_via_mobile_token(token)
+    if not admin:
+        raise HTTPException(401, "توکن نامعتبر است.")
+    tenant = _current_tenant.get()
+    session_token = create_session_token(
+        ADMIN_PANEL_SECRET, admin["id"], admin["username"], admin["role"], tenant=tenant.slug,
+    )
+    response = RedirectResponse(url=next)
+    response.set_cookie(COOKIE_NAME, session_token, httponly=True, samesite="lax", max_age=3600, path="/")
+    return response
+
+
+@app.get("/api/app/config")
+def api_app_config(admin=Depends(get_current_admin)):
+    """پیکربندی Server-Driven UI برای اپ اندروید: تب‌های ناوبری پایین و نوع هر
+    صفحه. اپ این JSON را می‌خواند و کامپوننت‌های Native متناظر را می‌سازد —
+    اضافه/حذف/تغییر یک تب اینجا، بدون هیچ آپدیت اپ، همان لحظه در اپ اثر می‌کند."""
+    perms = admin["permissions"]
+    is_owner = admin["role"] == "owner"
+
+    def allowed(perm: str) -> bool:
+        return is_owner or perm in perms
+
+    tabs = [
+        {
+            "id": "dashboard", "title": "داشبورد", "icon": "dashboard", "screen": "dashboard",
+            "source": "/api/dashboard",
+        }
+    ]
+    if allowed("orders"):
+        tabs.append({
+            "id": "orders", "title": "سفارش‌ها", "icon": "receipt", "screen": "list",
+            "source": "/api/orders", "item_id_field": "id",
+            "search": True,
+            "filters": [{"key": "status", "label": "وضعیت", "options":
+                         ["pending", "approved", "rejected"]}],
+            "fields": [
+                {"key": "id", "label": "#", "type": "text"},
+                {"key": "product_name", "label": "محصول", "type": "title"},
+                {"key": "amount", "label": "مبلغ", "type": "currency"},
+                {"key": "status", "label": "وضعیت", "type": "badge"},
+                {"key": "created_at", "label": "تاریخ", "type": "date"},
+            ],
+            "actions": [
+                {"id": "approve", "label": "تایید", "method": "POST",
+                 "endpoint": "/api/orders/{id}/approve", "style": "success", "confirm": True},
+                {"id": "reject", "label": "رد", "method": "POST",
+                 "endpoint": "/api/orders/{id}/reject", "style": "danger", "confirm": True},
+            ],
+        })
+        # شارژ کیف‌پول هم زیر همان مجوز "orders" است (طبق تعریف WEB_ADMIN_PERMISSIONS)
+        tabs.append({
+            "id": "topups", "title": "شارژ کیف‌پول", "icon": "wallet", "screen": "list",
+            "source": "/api/topups", "item_id_field": "id",
+            "fields": [
+                {"key": "id", "label": "#", "type": "text"},
+                {"key": "amount", "label": "مبلغ", "type": "currency"},
+                {"key": "status", "label": "وضعیت", "type": "badge"},
+                {"key": "created_at", "label": "تاریخ", "type": "date"},
+            ],
+            "actions": [
+                {"id": "approve", "label": "تایید", "method": "POST",
+                 "endpoint": "/api/topups/{id}/approve", "style": "success", "confirm": True},
+                {"id": "reject", "label": "رد", "method": "POST",
+                 "endpoint": "/api/topups/{id}/reject", "style": "danger", "confirm": True},
+            ],
+        })
+    if allowed("users"):
+        tabs.append({
+            "id": "users", "title": "کاربران", "icon": "people", "screen": "list",
+            "source": "/api/users", "item_id_field": "tg_id", "search": True,
+            "fields": [
+                {"key": "tg_id", "label": "شناسه", "type": "text"},
+                {"key": "full_name", "label": "نام", "type": "title"},
+                {"key": "wallet_balance", "label": "کیف‌پول", "type": "currency"},
+            ],
+            "detail_source": "/api/users/{tg_id}",
+            "actions": [
+                {"id": "block", "label": "مسدود", "method": "POST",
+                 "endpoint": "/api/users/{tg_id}/block", "style": "danger", "confirm": True},
+                {"id": "unblock", "label": "رفع مسدودی", "method": "POST",
+                 "endpoint": "/api/users/{tg_id}/unblock", "style": "success", "confirm": True},
+            ],
+        })
+    if allowed("catalog"):
+        tabs.append({
+            "id": "products", "title": "محصولات", "icon": "box", "screen": "list",
+            "source": "/api/products", "item_id_field": "id",
+            "fields": [
+                {"key": "name", "label": "نام", "type": "title"},
+                {"key": "price", "label": "قیمت", "type": "currency"},
+                {"key": "is_active", "label": "فعال", "type": "toggle",
+                 "toggle_endpoint": "/api/products/{id}/toggle"},
+            ],
+        })
+    tabs.append({"id": "map", "title": "نقشه سرورها (نمای وب)", "screen": "webview",
+                 "icon": "map", "url": "/"})
+    tabs.append({"id": "settings", "title": "تنظیمات", "icon": "settings", "screen": "settings"})
+
+    return {
+        "app_min_supported_version": 1,
+        "server_name": "ShopVPN Admin",
+        "tenant": admin["tenant"] or "main",
+        "tabs": tabs,
+    }
 
 
 @app.get("/api/notifications/summary")
