@@ -4985,6 +4985,7 @@ const SETTINGS_TABS = [
   { key: 'content', label: '📝 محتوا و متن‌ها' },
   { key: 'payment', label: '💳 پرداخت و مالی' },
   { key: 'services', label: '⚙️ سرویس‌های ویژه' },
+  { key: 'mobile_app', label: '📱 اپ موبایل' },
 ];
 // نکته: تنظیمات رفرال، گردونه‌شانس، کریپتو، یادآوری تمدید/حجم، کانفیگ تست خودکار،
 // عضویت اجباری و هشدار موجودی همگی به‌طور کامل‌تر در صفحه‌ی «تنظیمات فروش» هستند؛
@@ -5151,6 +5152,81 @@ function switchSettingsTab(tab, root) {
   $$('#settings-tabs-nav .tab-btn, #settings-tabs-nav .bru-seg-btn, #settings-tabs-nav .bn-seg-btn', root).forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   $$('[data-settings-tab]', root).forEach(el => { el.style.display = el.dataset.settingsTab === tab ? '' : 'none'; });
 }
+
+/* --------------------------------------------- تنظیمات: اپ موبایل مدیریت -- */
+// توکن‌های دسترسی طولانی‌مدت (PAT) برای اپ اندروید مدیریت؛ خود اپ هم از
+// داخل «تنظیمات» می‌تواند توکن جدید بسازد، این بخش فقط برای اولین اتصال
+// و مدیریت/باطل‌کردن توکن‌ها از روی مرورگر است.
+function mobileAppCardHtml(tokens) {
+  const rows = (tokens || []).map(t => `
+    <div class="list-row" data-token-row="${t.id}">
+      <div>
+        <div>${esc(t.name)}${t.revoked_at ? ' <span class="badge badge-muted">باطل‌شده</span>' : ''}</div>
+        <div class="mono" style="font-size:12px;color:var(--muted,#888)">${esc(t.token_prefix)} · ساخته‌شده ${fmtDate(t.created_at)}${t.last_used_at ? ' · آخرین استفاده ' + fmtDate(t.last_used_at) : ''}</div>
+      </div>
+      ${!t.revoked_at ? `<button class="btn btn-danger btn-sm" data-revoke-token="${t.id}">باطل کردن</button>` : ''}
+    </div>`).join('') || `<div class="empty-state">هنوز توکنی نساخته‌ای.</div>`;
+
+  return `
+  <div class="card">
+    <h3>اپ موبایل مدیریت</h3>
+    <p style="color:var(--muted,#888);font-size:13px">
+      از اینجا یک توکن دسترسی برای اپ اندروید ShopVPN Admin بساز. آدرس همین پنل و
+      این توکن را داخل اپ وارد کن تا وصل شود. هر گوشی/دستگاه بهتر است توکن جدا داشته باشد.
+    </p>
+    <div class="form-inline" style="display:flex;gap:8px;margin:12px 0">
+      <input type="text" id="new-mobile-token-name" placeholder="نام دستگاه (مثلاً گوشی من)" style="flex:1" />
+      <button class="btn btn-primary" id="create-mobile-token-btn">ساخت توکن</button>
+    </div>
+    <div id="new-mobile-token-box"></div>
+    <div class="list" style="margin-top:8px">${rows}</div>
+  </div>`;
+}
+
+function bindMobileAppEvents(root, refresh) {
+  const createBtn = $('#create-mobile-token-btn', root);
+  if (createBtn) createBtn.addEventListener('click', async () => {
+    const nameInput = $('#new-mobile-token-name', root);
+    const name = (nameInput?.value || 'دستگاه من').trim();
+    createBtn.disabled = true;
+    try {
+      const res = await apiPost('/app/tokens', { name });
+      const box = $('#new-mobile-token-box', root);
+      if (box) {
+        box.innerHTML = `
+          <div class="card" style="background:var(--surface-2,#1a1a1a);margin-bottom:10px">
+            <p style="font-size:13px">این توکن فقط همین یک‌بار نمایش داده می‌شود — همین الان کپی کن:</p>
+            <div style="display:flex;gap:8px;align-items:center">
+              <code class="mono" style="flex:1;word-break:break-all">${esc(res.token)}</code>
+              <button class="btn btn-ghost btn-sm" data-copy-token="${esc(res.token)}">کپی</button>
+            </div>
+            <p class="mono" style="font-size:12px;margin-top:6px">آدرس سرور: ${esc(res.server_url || location.origin)}</p>
+          </div>`;
+        $('[data-copy-token]', box).addEventListener('click', () => {
+          navigator.clipboard?.writeText(res.token).then(() => toast('کپی شد.'));
+        });
+      }
+      toast('توکن ساخته شد.');
+      refresh();
+    } catch (e) {
+      handleErr(e);
+    } finally {
+      createBtn.disabled = false;
+    }
+  });
+
+  $$('[data-revoke-token]', root).forEach(btn => btn.addEventListener('click', async () => {
+    if (!confirm('این توکن باطل شود؟ دستگاهی که با آن وصل شده دیگر دسترسی نخواهد داشت.')) return;
+    try {
+      await apiDelete(`/app/tokens/${btn.dataset.revokeToken}`);
+      toast('توکن باطل شد.');
+      refresh();
+    } catch (e) {
+      handleErr(e);
+    }
+  }));
+}
+
 
 function bindSettingsGroupEvents(root) {
   $$('.settings-group-head', root).forEach(btn => btn.addEventListener('click', () => {
@@ -5962,7 +6038,7 @@ const C2C_STATUS_LABEL = {
 
 
 async function renderSettings() {
-  const [settings, rate, mainMenuDisplay, gateways, methods, c2cCards, c2cWebhook, c2cInvoices] = await Promise.all([
+  const [settings, rate, mainMenuDisplay, gateways, methods, c2cCards, c2cWebhook, c2cInvoices, mobileTokens] = await Promise.all([
     apiGet('/settings'),
     apiGet('/exchange-rate').catch(e => ({ ok: false, rate: null, source: null, updated_at: null, error: e.message })),
     apiGet('/settings/main-menu-display').catch(() => ({ reply_enabled: true, inline_enabled: false, columns: 1 })),
@@ -5971,10 +6047,11 @@ async function renderSettings() {
     apiGet('/card-to-card/cards').catch(() => []),
     apiGet('/settings/card-to-card').catch(() => ({})),
     apiGet('/card-to-card/invoices?status=pending').catch(() => []),
+    apiGet('/app/tokens').catch(() => []),
   ]);
   const pay = { gateways, methods, c2cCards, c2cWebhook, c2cInvoices };
-  if (loadTheme().theme === 'brutalist') return renderSettingsBrutalist(settings, rate, mainMenuDisplay, pay);
-  if (loadTheme().theme === 'bento') return renderSettingsBento(settings, rate, mainMenuDisplay, pay);
+  if (loadTheme().theme === 'brutalist') return renderSettingsBrutalist(settings, rate, mainMenuDisplay, pay, mobileTokens);
+  if (loadTheme().theme === 'bento') return renderSettingsBento(settings, rate, mainMenuDisplay, pay, mobileTokens);
   setContent(`
     ${settingsTabsHtml()}
 
@@ -5987,6 +6064,10 @@ async function renderSettings() {
       ${paymentExtrasHtml(pay)}
     </div>
 
+    <div data-settings-tab="mobile_app" style="${settingsActiveTab === 'mobile_app' ? '' : 'display:none'}">
+      ${mobileAppCardHtml(mobileTokens)}
+    </div>
+
     ${renderSettingsGroups(settings)}
 
     <div class="settings-save-bar">
@@ -5996,6 +6077,7 @@ async function renderSettings() {
   $$('#settings-tabs-nav .tab-btn', content()).forEach(btn => btn.addEventListener('click', () => switchSettingsTab(btn.dataset.tab, content())));
   bindSettingsGroupEvents(content());
   bindPaymentExtrasEvents(content(), pay);
+  bindMobileAppEvents(content(), renderSettings);
   $('#mm-display-save').addEventListener('click', saveMainMenuDisplay);
   $('#settings-save').addEventListener('click', () => collectAndSaveSettings(content(), $('#settings-save')));
   $('#rate-refresh').addEventListener('click', async () => {
@@ -6015,7 +6097,7 @@ async function renderSettings() {
 /* ----------------------------------------------------- settings: bento -- */
 // تب افقی به سگمنت کپسولی اپلی تبدیل می‌شه؛ بدنه‌ی فرم همون منطق قبلیه،
 // فقط با آکاردئون/سوییچ/سواچ گردتر (از طریق CSS اسکوپ‌شده به تم bento).
-function renderSettingsBento(settings, rate, mainMenuDisplay, pay) {
+function renderSettingsBento(settings, rate, mainMenuDisplay, pay, mobileTokens) {
   setContent(`
     <div class="bn-hero"><div><h2>تنظیمات</h2><p>پیکربندی محتوا، پرداخت، کمپین و سرویس‌های ربات</p></div></div>
     <div class="bn-seg" id="settings-tabs-nav" style="margin-bottom:16px">
@@ -6028,6 +6110,9 @@ function renderSettingsBento(settings, rate, mainMenuDisplay, pay) {
       ${rateCardHtml(rate)}
       ${paymentExtrasHtml(pay)}
     </div>
+    <div data-settings-tab="mobile_app" style="${settingsActiveTab === 'mobile_app' ? '' : 'display:none'}">
+      ${mobileAppCardHtml(mobileTokens)}
+    </div>
     ${renderSettingsGroups(settings)}
     <div class="settings-save-bar">
       <button class="bn-btn bn-btn-ok btn-block" id="settings-save" style="width:100%;padding:12px">ذخیره تغییرات</button>
@@ -6036,6 +6121,7 @@ function renderSettingsBento(settings, rate, mainMenuDisplay, pay) {
   $$('#settings-tabs-nav .bn-seg-btn', content()).forEach(btn => btn.addEventListener('click', () => switchSettingsTab(btn.dataset.tab, content())));
   bindSettingsGroupEvents(content());
   bindPaymentExtrasEvents(content(), pay);
+  bindMobileAppEvents(content(), renderSettings);
   $('#mm-display-save').addEventListener('click', saveMainMenuDisplay);
   $('#settings-save').addEventListener('click', () => collectAndSaveSettings(content(), $('#settings-save')));
   $('#rate-refresh').addEventListener('click', async () => {
@@ -6066,7 +6152,7 @@ function renderSettingsBento(settings, rate, mainMenuDisplay, pay) {
 /* ------------------------------------------------- settings: brutalist -- */
 // ناوبری از تب افقی به سایدبار عمودی تبدیل می‌شه (مثل داشبورد ادمین‌های
 // واقعی) — بدنه‌ی فرم‌ها با همون منطق قبلی، فقط قاب/سوییچ/سواچ برutalist.
-function renderSettingsBrutalist(settings, rate, mainMenuDisplay, pay) {
+function renderSettingsBrutalist(settings, rate, mainMenuDisplay, pay, mobileTokens) {
   setContent(`
     <div class="bru-hero"><h2>تنظیمات</h2><p>پیکربندی محتوا، پرداخت، کمپین و سرویس‌های ربات</p></div>
     <div class="bru-settings-layout">
@@ -6081,6 +6167,9 @@ function renderSettingsBrutalist(settings, rate, mainMenuDisplay, pay) {
           ${rateCardHtml(rate)}
           ${paymentExtrasHtml(pay)}
         </div>
+        <div data-settings-tab="mobile_app" style="${settingsActiveTab === 'mobile_app' ? '' : 'display:none'}">
+          ${mobileAppCardHtml(mobileTokens)}
+        </div>
         ${renderSettingsGroups(settings)}
         <div class="settings-save-bar">
           <button class="bru-stamp bru-stamp-ok btn-block" id="settings-save" style="--r:-2deg;width:100%">ذخیره تغییرات</button>
@@ -6091,6 +6180,7 @@ function renderSettingsBrutalist(settings, rate, mainMenuDisplay, pay) {
   $$('#settings-tabs-nav .bru-seg-btn', content()).forEach(btn => btn.addEventListener('click', () => switchSettingsTab(btn.dataset.tab, content())));
   bindSettingsGroupEvents(content());
   bindPaymentExtrasEvents(content(), pay);
+  bindMobileAppEvents(content(), renderSettings);
   $('#mm-display-save').addEventListener('click', saveMainMenuDisplay);
   $('#settings-save').addEventListener('click', () => collectAndSaveSettings(content(), $('#settings-save')));
   $('#rate-refresh').addEventListener('click', async () => {

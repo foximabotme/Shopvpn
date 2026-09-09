@@ -290,6 +290,9 @@ button, input, select, textarea{ font-family:inherit; }
 .badge-pending{ background:rgba(255,159,67,.12); color:var(--amber); }
 .badge-approved{ background:rgba(40,199,111,.12); color:var(--emerald); }
 .badge-rejected{ background:rgba(234,84,85,.12); color:var(--rose); }
+.badge-muted{ background:rgba(148,148,158,.14); color:var(--text-muted); }
+.list-row{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 4px; border-bottom:1px solid var(--border,rgba(255,255,255,.06)); }
+.list-row:last-child{ border-bottom:none; }
 .badge-owner{ background:rgba(115,103,240,.14); color:var(--primary); }
 .badge-admin{ background:rgba(40,199,111,.12); color:var(--emerald); }
 .badge-mid{ background:rgba(255,159,67,.12); color:var(--amber); }
