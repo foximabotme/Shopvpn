@@ -5162,16 +5162,20 @@ function switchSettingsTab(tab, root) {
 // توکن‌های دسترسی طولانی‌مدت (PAT) برای اپ اندروید مدیریت؛ خود اپ هم از
 // داخل «تنظیمات» می‌تواند توکن جدید بسازد، این بخش فقط برای اولین اتصال
 // و مدیریت/باطل‌کردن توکن‌ها از روی مرورگر است.
-function mobileAppCardHtml(tokens) {
-  const rows = (tokens || []).map(t => `
+function mobileTokenRowsHtml(tokens) {
+  return (tokens || []).map(t => `
     <div class="list-row" data-token-row="${t.id}">
       <div>
         <div>${esc(t.name)}${t.revoked_at ? ' <span class="badge badge-muted">باطل‌شده</span>' : ''}</div>
         <div class="mono" style="font-size:12px;color:var(--muted,#888)">${esc(t.token_prefix)} · ساخته‌شده ${fmtDate(t.created_at)}${t.last_used_at ? ' · آخرین استفاده ' + fmtDate(t.last_used_at) : ''}</div>
       </div>
-      ${!t.revoked_at ? `<button class="btn btn-danger btn-sm" data-revoke-token="${t.id}">باطل کردن</button>` : ''}
+      ${!t.revoked_at
+        ? `<button class="btn btn-danger btn-sm" data-revoke-token="${t.id}">باطل کردن</button>`
+        : `<button class="btn btn-danger btn-sm" data-delete-token="${t.id}">حذف</button>`}
     </div>`).join('') || `<div class="empty-state">هنوز توکنی نساخته‌ای.</div>`;
+}
 
+function mobileAppCardHtml(tokens) {
   return `
   <div class="card">
     <h3>اپ موبایل مدیریت</h3>
@@ -5184,8 +5188,69 @@ function mobileAppCardHtml(tokens) {
       <button class="btn btn-primary" id="create-mobile-token-btn">ساخت توکن</button>
     </div>
     <div id="new-mobile-token-box"></div>
-    <div class="list" style="margin-top:8px">${rows}</div>
+    <div class="list" id="mobile-token-list" style="margin-top:8px">${mobileTokenRowsHtml(tokens)}</div>
   </div>`;
+}
+
+function copyTokenText(text, btn) {
+  const done = () => { toast('کپی شد.'); };
+  const fallback = () => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try {
+      document.execCommand('copy');
+      done();
+    } catch (e) {
+      toast('کپی خودکار کار نکرد؛ متن را دستی انتخاب و کپی کن.');
+    }
+    document.body.removeChild(ta);
+  };
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(fallback);
+  } else {
+    fallback();
+  }
+}
+
+async function reloadMobileTokenList(root) {
+  const list = $('#mobile-token-list', root);
+  if (!list) return;
+  try {
+    const tokens = await apiGet('/app/tokens');
+    list.innerHTML = mobileTokenRowsHtml(tokens);
+    bindMobileTokenListEvents(root);
+  } catch (e) {
+    handleErr(e);
+  }
+}
+
+function bindMobileTokenListEvents(root) {
+  $$('[data-revoke-token]', root).forEach(btn => btn.addEventListener('click', async () => {
+    if (!confirm('این توکن باطل شود؟ دستگاهی که با آن وصل شده دیگر دسترسی نخواهد داشت.')) return;
+    try {
+      await apiDelete(`/app/tokens/${btn.dataset.revokeToken}`);
+      toast('توکن باطل شد.');
+      reloadMobileTokenList(root);
+    } catch (e) {
+      handleErr(e);
+    }
+  }));
+
+  $$('[data-delete-token]', root).forEach(btn => btn.addEventListener('click', async () => {
+    if (!confirm('این توکن برای همیشه حذف شود؟')) return;
+    try {
+      await apiDelete(`/app/tokens/${btn.dataset.deleteToken}`);
+      toast('توکن حذف شد.');
+      reloadMobileTokenList(root);
+    } catch (e) {
+      handleErr(e);
+    }
+  }));
 }
 
 function bindMobileAppEvents(root, refresh) {
@@ -5200,19 +5265,20 @@ function bindMobileAppEvents(root, refresh) {
       if (box) {
         box.innerHTML = `
           <div class="card" style="background:var(--surface-2,#1a1a1a);margin-bottom:10px">
-            <p style="font-size:13px">این توکن فقط همین یک‌بار نمایش داده می‌شود — همین الان کپی کن:</p>
+            <p style="font-size:13px">این توکن فقط همین یک‌بار نمایش داده می‌شود — همین الان کپی کن. با ساخت یا بستن توکن بعدی، این جعبه پاک می‌شود.</p>
             <div style="display:flex;gap:8px;align-items:center">
-              <code class="mono" style="flex:1;word-break:break-all">${esc(res.token)}</code>
-              <button class="btn btn-ghost btn-sm" data-copy-token="${esc(res.token)}">کپی</button>
+              <code class="mono" id="new-mobile-token-code" style="flex:1;word-break:break-all;user-select:all;cursor:text">${esc(res.token)}</code>
+              <button class="btn btn-ghost btn-sm" id="new-mobile-token-copy-btn">کپی</button>
             </div>
             <p class="mono" style="font-size:12px;margin-top:6px">آدرس سرور: ${esc(res.server_url || location.origin)}</p>
+            <button class="btn btn-ghost btn-sm" id="new-mobile-token-dismiss-btn" style="margin-top:6px">بستن</button>
           </div>`;
-        $('[data-copy-token]', box).addEventListener('click', () => {
-          navigator.clipboard?.writeText(res.token).then(() => toast('کپی شد.'));
-        });
+        $('#new-mobile-token-copy-btn', box).addEventListener('click', (ev) => copyTokenText(res.token, ev.currentTarget));
+        $('#new-mobile-token-dismiss-btn', box).addEventListener('click', () => { box.innerHTML = ''; });
       }
+      if (nameInput) nameInput.value = '';
       toast('توکن ساخته شد.');
-      refresh();
+      reloadMobileTokenList(root);
     } catch (e) {
       handleErr(e);
     } finally {
@@ -5220,16 +5286,7 @@ function bindMobileAppEvents(root, refresh) {
     }
   });
 
-  $$('[data-revoke-token]', root).forEach(btn => btn.addEventListener('click', async () => {
-    if (!confirm('این توکن باطل شود؟ دستگاهی که با آن وصل شده دیگر دسترسی نخواهد داشت.')) return;
-    try {
-      await apiDelete(`/app/tokens/${btn.dataset.revokeToken}`);
-      toast('توکن باطل شد.');
-      refresh();
-    } catch (e) {
-      handleErr(e);
-    }
-  }));
+  bindMobileTokenListEvents(root);
 }
 
 
