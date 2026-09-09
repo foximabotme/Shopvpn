@@ -1043,6 +1043,31 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS idx_push_subs_admin ON web_push_subscriptions(admin_id);
 
+                -- ===================== اپ موبایل مدیریت (Personal Access Token + FCM) =====================
+                CREATE TABLE IF NOT EXISTS mobile_app_tokens (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    admin_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    token_hash TEXT UNIQUE NOT NULL,
+                    token_prefix TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    last_used_at TEXT,
+                    revoked_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_mobile_tokens_hash ON mobile_app_tokens(token_hash);
+                CREATE INDEX IF NOT EXISTS idx_mobile_tokens_admin ON mobile_app_tokens(admin_id);
+
+                CREATE TABLE IF NOT EXISTS mobile_fcm_tokens (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    admin_id INTEGER NOT NULL,
+                    mobile_token_id INTEGER,
+                    fcm_token TEXT UNIQUE NOT NULL,
+                    device_label TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_fcm_tokens_admin ON mobile_fcm_tokens(admin_id);
+
                 CREATE TABLE IF NOT EXISTS temp_messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     chat_id INTEGER NOT NULL,
@@ -1789,6 +1814,84 @@ class Database:
     # -----------------------------------------------------------------------
     # پنل مدیریت وب مستقل (کاربران وب، جدا از ادمین‌های تلگرام)
     # -----------------------------------------------------------------------
+
+    # --------------------- اپ موبایل: توکن دسترسی طولانی‌مدت (PAT) ---------------------
+
+    def create_mobile_token(self, admin_id: int, name: str, token_hash: str, token_prefix: str) -> int:
+        with self._get_conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO mobile_app_tokens (admin_id, name, token_hash, token_prefix) VALUES (?, ?, ?, ?)",
+                (admin_id, name.strip()[:64] or "دستگاه بدون نام", token_hash, token_prefix),
+            )
+            return cur.lastrowid
+
+    def get_mobile_token_by_hash(self, token_hash: str):
+        with self._get_conn() as conn:
+            return conn.execute(
+                "SELECT * FROM mobile_app_tokens WHERE token_hash=? AND revoked_at IS NULL",
+                (token_hash,),
+            ).fetchone()
+
+    def touch_mobile_token(self, token_id: int):
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE mobile_app_tokens SET last_used_at=CURRENT_TIMESTAMP WHERE id=?", (token_id,)
+            )
+
+    def list_mobile_tokens(self, admin_id: int = None):
+        with self._get_conn() as conn:
+            if admin_id is not None:
+                rows = conn.execute(
+                    "SELECT id, admin_id, name, token_prefix, created_at, last_used_at, revoked_at "
+                    "FROM mobile_app_tokens WHERE admin_id=? ORDER BY created_at DESC", (admin_id,)
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT id, admin_id, name, token_prefix, created_at, last_used_at, revoked_at "
+                    "FROM mobile_app_tokens ORDER BY created_at DESC"
+                ).fetchall()
+            return rows
+
+    def revoke_mobile_token(self, token_id: int, admin_id: int = None) -> bool:
+        with self._get_conn() as conn:
+            if admin_id is not None:
+                cur = conn.execute(
+                    "UPDATE mobile_app_tokens SET revoked_at=CURRENT_TIMESTAMP "
+                    "WHERE id=? AND admin_id=? AND revoked_at IS NULL", (token_id, admin_id)
+                )
+            else:
+                cur = conn.execute(
+                    "UPDATE mobile_app_tokens SET revoked_at=CURRENT_TIMESTAMP "
+                    "WHERE id=? AND revoked_at IS NULL", (token_id,)
+                )
+            return cur.rowcount > 0
+
+    # --------------------- اپ موبایل: توکن دستگاه برای Push (FCM) ---------------------
+
+    def save_fcm_token(self, admin_id: int, mobile_token_id: int, fcm_token: str, device_label: str = ""):
+        with self._get_conn() as conn:
+            conn.execute(
+                "INSERT INTO mobile_fcm_tokens (admin_id, mobile_token_id, fcm_token, device_label) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(fcm_token) DO UPDATE SET admin_id=excluded.admin_id, "
+                "mobile_token_id=excluded.mobile_token_id, device_label=excluded.device_label, "
+                "updated_at=CURRENT_TIMESTAMP",
+                (admin_id, mobile_token_id, fcm_token, device_label[:128]),
+            )
+
+    def delete_fcm_token(self, fcm_token: str):
+        with self._get_conn() as conn:
+            conn.execute("DELETE FROM mobile_fcm_tokens WHERE fcm_token=?", (fcm_token,))
+
+    def list_fcm_tokens(self, admin_id: int = None):
+        with self._get_conn() as conn:
+            if admin_id is not None:
+                rows = conn.execute(
+                    "SELECT * FROM mobile_fcm_tokens WHERE admin_id=?", (admin_id,)
+                ).fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM mobile_fcm_tokens").fetchall()
+            return [r["fcm_token"] for r in rows]
 
     def create_web_admin(self, username: str, password_hash: str, role: str = "admin",
                           permissions=None) -> int:
