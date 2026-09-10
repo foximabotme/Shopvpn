@@ -1417,12 +1417,13 @@ async function fetchCustomGateways(amount, productId) {
   return _customGatewaysCache[cacheKey];
 }
 
-function renderReceiptCard(box, { amount, cardNumber, cardHolder, sendReceipt, successText, cryptoEnabled, createCryptoInvoice, customGateways, createCustomGatewayInvoice, cardToCardEnabled, cardAutoEnabled, createCardAutoInvoice, checkCardAutoStatus, noapayEnabled, createNoapayInvoice }) {
+function renderReceiptCard(box, { amount, cardNumber, cardHolder, sendReceipt, successText, cryptoEnabled, createCryptoInvoice, customGateways, createCustomGatewayInvoice, cardToCardEnabled, cardAutoEnabled, createCardAutoInvoice, checkCardAutoStatus, noapayEnabled, createNoapayInvoice, abangatewayEnabled, createAbangatewayInvoice, blupalEnabled, createBlupalInvoice }) {
   customGateways = customGateways || [];
   // اگر ادمین کارت‌به‌کارت دستی را غیرفعال کرده باشد (card_to_card_enabled=0)، این بخش
   // باید مثل بات اصلی مخفی شود؛ پیش‌فرض (undefined، برای سازگاری با پاسخ‌های قدیمی) فعال است.
   const cardEnabled = cardToCardEnabled !== false && !!cardNumber;
-  const noPaymentMethod = !cardEnabled && !cryptoEnabled && !cardAutoEnabled && !customGateways.length;
+  const noPaymentMethod = !cardEnabled && !cryptoEnabled && !cardAutoEnabled && !noapayEnabled
+    && !abangatewayEnabled && !blupalEnabled && !customGateways.length;
   const customGatewaysHtml = customGateways.length ? `
     <div style="display:flex;align-items:center;gap:8px;margin:16px 0">
       <div style="flex:1;height:1px;background:var(--border,rgba(255,255,255,.1))"></div>
@@ -1501,6 +1502,26 @@ function renderReceiptCard(box, { amount, cardNumber, cardHolder, sendReceipt, s
       </div>
       <button class="btn outline" id="pay-noapay-btn" style="width:100%">⭐ NoapayBot - استارز تلگرام (تایید آنی)</button>
       <div id="noapay-pay-error" class="field-error"></div>
+    ` : ""}
+
+    ${abangatewayEnabled ? `
+      <div style="display:flex;align-items:center;gap:8px;margin:16px 0">
+        <div style="flex:1;height:1px;background:var(--border,rgba(255,255,255,.1))"></div>
+        <span class="hint-text" style="margin:0">یا</span>
+        <div style="flex:1;height:1px;background:var(--border,rgba(255,255,255,.1))"></div>
+      </div>
+      <button class="btn outline" id="pay-abangateway-btn" style="width:100%">💠 پرداخت با آبان گیت‌وی</button>
+      <div id="abangateway-pay-error" class="field-error"></div>
+    ` : ""}
+
+    ${blupalEnabled ? `
+      <div style="display:flex;align-items:center;gap:8px;margin:16px 0">
+        <div style="flex:1;height:1px;background:var(--border,rgba(255,255,255,.1))"></div>
+        <span class="hint-text" style="margin:0">یا</span>
+        <div style="flex:1;height:1px;background:var(--border,rgba(255,255,255,.1))"></div>
+      </div>
+      <button class="btn outline" id="pay-blupal-btn" style="width:100%">💠 پرداخت با بلوپال</button>
+      <div id="blupal-pay-error" class="field-error"></div>
     ` : ""}
     ${customGatewaysHtml}
   `;
@@ -1626,6 +1647,62 @@ function renderReceiptCard(box, { amount, cardNumber, cardHolder, sendReceipt, s
       }
     };
   }
+  if (abangatewayEnabled) {
+    const abanBtn = box.querySelector("#pay-abangateway-btn");
+    const abanErr = box.querySelector("#abangateway-pay-error");
+    abanBtn.onclick = async () => {
+      abanErr.textContent = "";
+      abanBtn.disabled = true;
+      abanBtn.textContent = "در حال ساخت فاکتور...";
+      try {
+        const res = await createAbangatewayInvoice();
+        tg.HapticFeedback.notificationOccurred("success");
+        box.innerHTML = `
+          <div class="state-msg">
+            <span class="ic">💠</span>
+            فاکتور پرداخت «آبان گیت‌وی» ساخته شد. روی دکمه‌ی زیر بزن و پرداخت رو تکمیل کن.
+            <br/>به‌محض تایید پرداخت، به‌صورت خودکار سفارش/کیف‌پول شما تسویه می‌شود.
+          </div>
+          <button class="btn" id="open-invoice-btn" style="width:100%;margin-top:12px">🔗 رفتن به صفحه‌ی پرداخت</button>
+        `;
+        box.querySelector("#open-invoice-btn").onclick = () => tg.openLink(res.payment_url);
+        tg.openLink(res.payment_url);
+      } catch (e) {
+        abanErr.textContent = e.message;
+        abanBtn.disabled = false;
+        abanBtn.textContent = "💠 پرداخت با آبان گیت‌وی";
+      }
+    };
+  }
+
+  if (blupalEnabled) {
+    const blupalBtn = box.querySelector("#pay-blupal-btn");
+    const blupalErr = box.querySelector("#blupal-pay-error");
+    blupalBtn.onclick = async () => {
+      blupalErr.textContent = "";
+      blupalBtn.disabled = true;
+      blupalBtn.textContent = "در حال ساخت فاکتور...";
+      try {
+        const res = await createBlupalInvoice();
+        tg.HapticFeedback.notificationOccurred("success");
+        box.innerHTML = `
+          <div class="state-msg">
+            <span class="ic">💠</span>
+            فاکتور پرداخت «بلوپال» ساخته شد. روی دکمه‌ی زیر بزن و پرداخت رو تکمیل کن.
+            <br/>به‌محض تایید پرداخت، به‌صورت خودکار سفارش/کیف‌پول شما تسویه می‌شود.
+          </div>
+          <button class="btn" id="open-invoice-btn" style="width:100%;margin-top:12px">🔗 رفتن به صفحه‌ی پرداخت</button>
+        `;
+        box.querySelector("#open-invoice-btn").onclick = () => tg.openLink(res.payment_url);
+        tg.openLink(res.payment_url);
+      } catch (e) {
+        blupalErr.textContent = e.message;
+        blupalBtn.disabled = false;
+        blupalBtn.textContent = "💠 پرداخت با بلوپال";
+      }
+    };
+  }
+
   if (customGateways.length && createCustomGatewayInvoice) {
     const cgErr = box.querySelector("#custom-gw-error");
     box.querySelectorAll(".custom-gw-btn").forEach((btn) => {
@@ -1936,6 +2013,10 @@ async function buyProduct(productId, quantity, code) {
         checkCardAutoStatus: async (invoiceId) => api(`/api/card-auto-invoice/${invoiceId}/status`),
         noapayEnabled: result.noapay_enabled,
         createNoapayInvoice: async () => api(`/api/orders/${result.order_id}/noapay-invoice`, { method: "POST" }),
+        abangatewayEnabled: result.abangateway_enabled,
+        createAbangatewayInvoice: async () => api(`/api/orders/${result.order_id}/abangateway-invoice`, { method: "POST" }),
+        blupalEnabled: result.blupal_enabled,
+        createBlupalInvoice: async () => api(`/api/orders/${result.order_id}/blupal-invoice`, { method: "POST" }),
         customGateways,
         createCustomGatewayInvoice: async (key) => api(`/api/orders/${result.order_id}/custom-invoice/${key}`, { method: "POST" }),
       });
@@ -2076,6 +2157,10 @@ async function submitCustomConfig(username, volumeGb, useCredit, info) {
         checkCardAutoStatus: async (invoiceId) => api(`/api/card-auto-invoice/${invoiceId}/status`),
         noapayEnabled: result.noapay_enabled,
         createNoapayInvoice: async () => api(`/api/orders/${result.order_id}/noapay-invoice`, { method: "POST" }),
+        abangatewayEnabled: result.abangateway_enabled,
+        createAbangatewayInvoice: async () => api(`/api/orders/${result.order_id}/abangateway-invoice`, { method: "POST" }),
+        blupalEnabled: result.blupal_enabled,
+        createBlupalInvoice: async () => api(`/api/orders/${result.order_id}/blupal-invoice`, { method: "POST" }),
         customGateways: customGateways2,
         createCustomGatewayInvoice: async (key) => api(`/api/orders/${result.order_id}/custom-invoice/${key}`, { method: "POST" }),
       });
@@ -2218,7 +2303,7 @@ async function renderWallet() {
       btn.disabled = true;
       try {
         const r = await api("/api/wallet/topup-request", { method: "POST", body: JSON.stringify({ amount }) });
-        renderTopupPaymentStep(r.topup_id, amount, r.card_number, r.card_holder, r.crypto_enabled, r.card_to_card_enabled, r.card_to_card_auto_enabled, r.noapay_enabled);
+        renderTopupPaymentStep(r.topup_id, amount, r.card_number, r.card_holder, r.crypto_enabled, r.card_to_card_enabled, r.card_to_card_auto_enabled, r.noapay_enabled, r.abangateway_enabled, r.blupal_enabled);
       } catch (e) {
         notify("خطا: " + e.message);
         btn.disabled = false;
@@ -2229,7 +2314,7 @@ async function renderWallet() {
   }
 }
 
-async function renderTopupPaymentStep(topupId, amount, cardNumber, cardHolder, cryptoEnabled, cardToCardEnabled, cardAutoEnabled, noapayEnabled) {
+async function renderTopupPaymentStep(topupId, amount, cardNumber, cardHolder, cryptoEnabled, cardToCardEnabled, cardAutoEnabled, noapayEnabled, abangatewayEnabled, blupalEnabled) {
   const box = document.getElementById("topup-card");
   const customGateways = await fetchCustomGateways(amount, null);
   renderReceiptCard(box, {
@@ -2248,6 +2333,10 @@ async function renderTopupPaymentStep(topupId, amount, cardNumber, cardHolder, c
     checkCardAutoStatus: async (invoiceId) => api(`/api/card-auto-invoice/${invoiceId}/status`),
     noapayEnabled,
     createNoapayInvoice: async () => api("/api/wallet/noapay-invoice", { method: "POST", body: JSON.stringify({ topup_id: topupId }) }),
+    abangatewayEnabled,
+    createAbangatewayInvoice: async () => api("/api/wallet/abangateway-invoice", { method: "POST", body: JSON.stringify({ topup_id: topupId }) }),
+    blupalEnabled,
+    createBlupalInvoice: async () => api("/api/wallet/blupal-invoice", { method: "POST", body: JSON.stringify({ topup_id: topupId }) }),
     customGateways,
     createCustomGatewayInvoice: async (key) => api(`/api/wallet/custom-invoice/${key}`, { method: "POST", body: JSON.stringify({ topup_id: topupId }) }),
   });
