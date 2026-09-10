@@ -39,7 +39,7 @@ class NoCacheStaticFiles(StaticFiles):
         return response
 from pydantic import BaseModel
 
-from config import DB_PATH, BOT_TOKEN, OWNER_ID, ADMIN_PANEL_SECRET, VAPID_PUBLIC_KEY, resolve_db_path, API_BASE_URL, RESELLER_DBS_DIR
+from config import DB_PATH, BOT_TOKEN, OWNER_ID, ADMIN_PANEL_SECRET, VAPID_PUBLIC_KEY, resolve_db_path, API_BASE_URL, RESELLER_DBS_DIR, DATA_DIR
 from database import Database, WEB_ADMIN_PERMISSIONS, MENU_BUTTON_META
 import button_registry
 from admin_panel.security import hash_password, verify_password, create_session_token, verify_session_token
@@ -68,6 +68,8 @@ import custom_gateway_payment
 logger = logging.getLogger("admin_panel.server")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PERSISTENT_UPLOADS_DIR = os.path.join(DATA_DIR, "admin_uploads")
+os.makedirs(os.path.join(PERSISTENT_UPLOADS_DIR, "banners"), exist_ok=True)
 COOKIE_NAME = "panel_session"
 NOTIFY_POLL_SECONDS = 15
 
@@ -3496,7 +3498,7 @@ async def api_upload_banner_image(photo: UploadFile = File(...), admin=Depends(r
     if ext not in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
         ext = ".jpg"
     fname = f"banner_{int(time.time()*1000)}{ext}"
-    dest_dir = os.path.join(BASE_DIR, "static", "uploads", "banners")
+    dest_dir = os.path.join(PERSISTENT_UPLOADS_DIR, "banners")
     os.makedirs(dest_dir, exist_ok=True)
     with open(os.path.join(dest_dir, fname), "wb") as f:
         f.write(content)
@@ -3993,6 +3995,11 @@ def api_change_my_password(body: MyPasswordBody, admin=Depends(get_current_admin
 # ------------------------------------------------------------------ static --
 
 STATIC_DIR = os.path.join(BASE_DIR, "static")
+app.mount(
+    "/static/uploads",
+    NoCacheStaticFiles(directory=PERSISTENT_UPLOADS_DIR),
+    name="persistent-uploads",
+)
 app.mount("/assets", NoCacheStaticFiles(directory=STATIC_DIR), name="assets")
 
 
@@ -4069,4 +4076,3 @@ def serve_setup_page():
         html = f.read()
     html = _bust_asset_cache(html)
     return HTMLResponse(html, headers={"Cache-Control": "no-store"})
-
