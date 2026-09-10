@@ -11,6 +11,7 @@
 [![Made by](https://img.shields.io/badge/Made%20by-Mehdi%20Rafatpanah-orange?style=for-the-badge)](https://github.com/mehdirafatpanah)
 
 [نصب خودکار](#-نصب-خودکار-یک‌خطی-پیشنهادی) •
+[نصب روی Railway](RAILWAY.md) •
 [نصب دستی](#-نصب-دستی) •
 [متغیرهای محیطی](#-متغیرهای-محیطی-env) •
 [امکانات](#-امکانات) •
@@ -21,6 +22,16 @@
 [مدیریت بات](#-مدیریت-بات-managesh)
 
 </div>
+
+---
+
+## 🚄 نصب روی Railway
+
+این فورک برای اجرای هم‌زمان بات، Mini App و در صورت نیاز پنل وب روی Railway
+آماده شده است. راهنمای کامل و مرحله‌به‌مرحله را در
+**[RAILWAY.md](RAILWAY.md)** بخوانید. Shopvpn از SQLite استفاده می‌کند؛ در
+Railway به دیتابیس MySQL/PostgreSQL نیاز ندارد، اما اتصال یک Volume به مسیر
+`/data` اجباری است.
 
 ---
 

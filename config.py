@@ -30,15 +30,32 @@ if not OWNER_ID_RAW or not OWNER_ID_RAW.strip().lstrip("-").isdigit():
 
 OWNER_ID = int(OWNER_ID_RAW)
 
-# پوشه‌ی ریشه‌ی پروژه (مطلق) - برای اینکه مسیر دیتابیس‌ها به cwd پروسه‌ای که
-# main.py یا uvicorn (مینی‌اپ) با آن اجرا می‌شوند وابسته نباشد و همیشه یکی باشد
+# پوشه‌ی ریشه‌ی کد پروژه (مطلق)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# مسیر فایل دیتابیس بات اصلی
-DB_PATH = os.path.join(BASE_DIR, "bot_database.db")
+# پوشه‌ی داده‌های پایدار. Railway مسیر Volume متصل‌شده را خودش در
+# RAILWAY_VOLUME_MOUNT_PATH قرار می‌دهد؛ DATA_DIR برای تعیین دستی همان مسیر
+# در Railway یا هر میزبان دیگری قابل استفاده است. در نصب‌های قدیمی که هیچ‌کدام
+# تنظیم نشده‌اند، رفتار قبلی حفظ می‌شود و داده‌ها کنار کد قرار می‌گیرند.
+DATA_DIR = os.path.abspath(
+    os.getenv("DATA_DIR")
+    or os.getenv("RAILWAY_VOLUME_MOUNT_PATH")
+    or BASE_DIR
+)
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# مسیر فایل دیتابیس بات اصلی. DB_PATH اختیاری است و بیشتر برای مهاجرت یا
+# بازیابی نصب‌های قدیمی کاربرد دارد.
+DB_PATH = os.path.abspath(
+    os.getenv("DB_PATH") or os.path.join(DATA_DIR, "bot_database.db")
+)
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 # پوشه‌ای که دیتابیس هر بات نمایندگی داخلش ذخیره می‌شود
-RESELLER_DBS_DIR = os.path.join(BASE_DIR, "reseller_dbs")
+RESELLER_DBS_DIR = os.path.abspath(
+    os.getenv("RESELLER_DBS_DIR") or os.path.join(DATA_DIR, "reseller_dbs")
+)
+os.makedirs(RESELLER_DBS_DIR, exist_ok=True)
 
 
 def resolve_db_path(path: str) -> str:
@@ -46,7 +63,21 @@ def resolve_db_path(path: str) -> str:
     به مسیر مطلق تبدیل می‌کند (سازگاری با رکوردهای نمایندگی قدیمی‌تر)."""
     if not path:
         return path
-    return path if os.path.isabs(path) else os.path.join(BASE_DIR, path)
+    if os.path.isabs(path):
+        if os.path.exists(path):
+            return path
+
+        # در بکاپی که از VPS منتقل شده، مسیر نماینده ممکن است چیزی شبیه
+        # /root/v2ray_bot/reseller_dbs/name.db باشد. خود فایل پس از انتقال
+        # داخل Volume است، پس آن را با همان نام به پوشه‌ی پایدار جدید نگاشت کن.
+        if os.path.basename(os.path.dirname(path)) == "reseller_dbs":
+            return os.path.join(RESELLER_DBS_DIR, os.path.basename(path))
+        return path
+
+    # نسخه‌های قبلی مسیر دیتابیس نماینده را نسبی ذخیره می‌کردند. با فعال‌شدن
+    # Volume، تمام مسیرهای نسبی باید داخل DATA_DIR حل شوند تا پس از Deploy یا
+    # Restart از بین نروند.
+    return os.path.join(DATA_DIR, os.path.normpath(path))
 
 # حالت دریافت آپدیت‌های تلگرام: "polling" (پیش‌فرض) یا "webhook"
 # توجه: تلگرام این دو را هم‌زمان روی یک توکن قبول نمی‌کند (ست‌کردن وب‌هوک

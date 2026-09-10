@@ -1,2 +1,41 @@
+# Python
 *.pyc
 __pycache__/
+*.pyo
+*.egg-info/
+build/
+dist/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+firebase-service-account.json
+
+# Databases and persistent runtime data
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+bot_database.db
+reseller_dbs/
+backups/
+admin_uploads/
+
+# Logs and caches
+*.log
+logs/
+_world_map_cache_*.json
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
