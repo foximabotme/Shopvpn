@@ -112,6 +112,17 @@ try:
 except Exception:
     logging.getLogger("miniapp.tenant").exception("مقداردهی اولیه دیتابیس اصلی ناموفق بود.")
 
+
+@app.get("/health", include_in_schema=False)
+def healthcheck():
+    """Healthcheck سبک Railway که دسترسی به دیتابیس پایدار را هم می‌سنجد."""
+    try:
+        main_db.get_all_settings()
+    except Exception as exc:
+        logging.getLogger("miniapp.health").exception("دیتابیس در healthcheck آماده نیست.")
+        raise HTTPException(status_code=503, detail="database unavailable") from exc
+    return {"status": "ok"}
+
 _bot_username_cache: dict[str, str] = {}  # bot_token -> username
 
 
