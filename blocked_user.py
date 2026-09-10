@@ -27,6 +27,18 @@ class BlockedUserMiddleware(BaseMiddleware):
         if not user:
             return await handler(event, data)
 
+        # ثبت/به‌روزرسانی کاربر باید همینجا (اولین میدلور، قبل از هر بلاک‌کننده‌ای
+        # مثل ForceJoinMiddleware) انجام شود، نه فقط داخل cmd_start. قبلاً فقط
+        # cmd_start این کار را می‌کرد؛ یعنی وقتی عضویت اجباری فعال بود و کاربر
+        # جدید هنوز عضو کانال نبود، /start او اصلاً به cmd_start نمی‌رسید و ردیف
+        # کاربر هرگز در دیتابیس ساخته نمی‌شد - حتی بعد از عضویت و زدن «بررسی
+        # مجدد» هم (چون آن کال‌بک هم add_or_update_user را صدا نمی‌زد) - نتیجه:
+        # کاربر برای همیشه در پنل وب و مینی‌اپ قابل جستجو نبود.
+        try:
+            self.db.add_or_update_user(user.id, user.username or "", user.first_name or "")
+        except Exception:
+            logger.exception("ثبت/به‌روزرسانی کاربر %s ناموفق بود.", user.id)
+
         # ادمین‌های بات از این محدودیت معاف هستند
         if self.db.is_admin(user.id):
             return await handler(event, data)
