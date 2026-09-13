@@ -12,13 +12,17 @@ import logging
 import os
 from logging.handlers import RotatingFileHandler
 
-from config import BOT_TOKEN, OWNER_ID, DB_PATH, BOT_MODE, resolve_db_path
+from config import BOT_TOKEN, OWNER_ID, DB_PATH, BOT_MODE, DATA_DIR, resolve_db_path
 from database import Database
 from bot_manager import BotManager
 
-os.makedirs("logs", exist_ok=True)
+LOG_DIR = os.path.join(DATA_DIR, "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
 _file_handler = RotatingFileHandler(
-    "logs/bot.log", maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"
+    os.path.join(LOG_DIR, "bot.log"),
+    maxBytes=5 * 1024 * 1024,
+    backupCount=5,
+    encoding="utf-8",
 )
 _file_handler.setFormatter(
     logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
